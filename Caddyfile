@@ -1,0 +1,3 @@
+bot.quitting7oh.org {
+    reverse_proxy web:3000
+}
