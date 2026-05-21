@@ -1,0 +1,156 @@
+// Quitting 7OH Bot — database schema
+// One Postgres DB shared by the Next.js web portal and the discord.js bot worker.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// A Discord server (guild) that the bot operates in.
+// Created/updated lazily when the bot joins a guild or an admin signs in.
+model Guild {
+  id          String   @id // Discord snowflake
+  name        String
+  iconUrl     String?
+  timezone    String   @default("America/New_York")
+  // Members with this Discord role get full portal access for this guild.
+  // null = only BOOTSTRAP_ADMIN_USER_IDS can manage this guild.
+  adminRoleId String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  posts            ScheduledPost[]
+  milestoneConfig  MilestoneConfig?
+  milestoneTiers   MilestoneTier[]
+}
+
+// One per-guild config row tracking where the milestone-claim message lives.
+model MilestoneConfig {
+  id          String   @id @default(cuid())
+  guildId     String   @unique
+  guild       Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  channelId   String? // channel hosting the published message
+  messageId   String? // id of the published message — null until first publish
+  title       String   @default("Recovery Milestones")
+  description String   @default("Pick the tier that reflects where you are right now. Your role updates automatically and replaces any earlier milestone role.") @db.Text
+
+  // Optional congrats post — sent to congratsChannelId when a user claims a tier.
+  congratsEnabled   Boolean @default(false)
+  congratsChannelId String?
+  congratsTemplate  String? @db.Text
+
+  // Private (ephemeral) message shown only to the user who clicked. Supports
+  // {tier} and {emoji} placeholders.
+  ephemeralTemplate String? @db.Text
+
+  updatedAt DateTime @updatedAt
+}
+
+// Individual milestone (button) — many per guild. The button custom_id sent to
+// Discord is "milestone:<id>", so this row's id is the source of truth.
+model MilestoneTier {
+  id        String @id @default(cuid())
+  guildId   String
+  guild     Guild  @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  label     String // human label shown on the button ("30 days")
+  emoji     String // unicode emoji ("🌱")
+  roleId    String // Discord role snowflake to grant
+  sortOrder Int    @default(0)
+
+  @@index([guildId, sortOrder])
+}
+
+// A scheduled message. Either `cron` (recurring) or `runAt` (one-off) is set,
+// never both. `active=false` pauses without deleting. `nextFireAt` is
+// pre-computed on every write so the scheduler can use an indexed lookup.
+model ScheduledPost {
+  id         String   @id @default(cuid())
+  guildId    String
+  guild      Guild    @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  name       String // human label, e.g. "Sunday 7pm Recovery Meeting"
+  channelIds String[] // one or more Discord channel snowflakes — the bot fans out
+
+  // Schedule — exactly one of these is set.
+  cron     String? // standard 5-field cron, e.g. "0 19 * * 0"
+  runAt    DateTime? // one-off UTC timestamp
+  timezone String? // overrides Guild.timezone for cron interpretation
+
+  // Content
+  useEmbed    Boolean @default(false)
+  content     String  @db.Text // body text (plain) OR embed description
+  embedTitle  String?
+  embedColor  String? // hex like "#5865F2"
+  embedUrl    String?
+  embedImage  String?
+
+  // Mentions — optional role to ping above the message.
+  mentionRoleId String?
+
+  // Minutes between when this post fires and when the meeting actually starts.
+  // Used to resolve {meetingTime} placeholders in the body.
+  leadMinutes Int @default(0)
+
+  // State
+  active      Boolean   @default(true)
+  lastFiredAt DateTime?
+  nextFireAt  DateTime? // null = no future run scheduled (e.g. fired one-off)
+
+  // Audit
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String? // Discord user id
+
+  @@index([active, nextFireAt])
+  @@index([guildId])
+}
+
+// --- Auth.js (NextAuth v5) tables ---
+// Standard Prisma adapter schema; lets users sign in via Discord OAuth.
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  accounts      Account[]
+  sessions      Session[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
