@@ -12,6 +12,54 @@ function headers() {
   return { Authorization: `Bot ${token}`, "Content-Type": "application/json" };
 }
 
+// Wraps fetch with Discord-specific recovery:
+//   - 429 (rate limited): sleeps for `retry_after` seconds then retries, up to 5 attempts
+//   - 5xx (server side): exponential backoff (250ms, 500ms, 1000ms), up to 3 attempts
+// Other failures pass straight through so the caller can throw with context.
+const MAX_RATE_LIMIT_RETRIES = 5;
+const MAX_SERVER_ERROR_RETRIES = 3;
+async function discordFetch(url: string, init: RequestInit): Promise<Response> {
+  let rateLimitAttempts = 0;
+  let serverErrorAttempts = 0;
+  for (;;) {
+    const res = await fetch(url, init);
+
+    if (res.status === 429 && rateLimitAttempts < MAX_RATE_LIMIT_RETRIES) {
+      rateLimitAttempts++;
+      // Prefer the JSON body's retry_after; fall back to the response header.
+      const body = await res.clone().json().catch(() => ({}));
+      const headerRetry = res.headers.get("retry-after");
+      const retryAfterSec =
+        typeof body.retry_after === "number"
+          ? body.retry_after
+          : headerRetry
+          ? Number(headerRetry)
+          : 1;
+      // Add a tiny jitter so concurrent callers don't synchronize on the same retry tick.
+      const waitMs = Math.max(retryAfterSec * 1000, 100) + Math.random() * 200;
+      console.warn(
+        `[discord-rest] 429 on ${init.method ?? "GET"} ${url} — waiting ${Math.round(
+          waitMs
+        )}ms (attempt ${rateLimitAttempts}/${MAX_RATE_LIMIT_RETRIES})`
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+
+    if (res.status >= 500 && res.status < 600 && serverErrorAttempts < MAX_SERVER_ERROR_RETRIES) {
+      serverErrorAttempts++;
+      const waitMs = 250 * 2 ** (serverErrorAttempts - 1);
+      console.warn(
+        `[discord-rest] ${res.status} on ${init.method ?? "GET"} ${url} — retrying in ${waitMs}ms (attempt ${serverErrorAttempts}/${MAX_SERVER_ERROR_RETRIES})`
+      );
+      await new Promise((r) => setTimeout(r, waitMs));
+      continue;
+    }
+
+    return res;
+  }
+}
+
 export type DiscordChannel = {
   id: string;
   name: string;
@@ -35,7 +83,7 @@ export type DiscordGuild = {
 
 // Channels the bot can see in a guild. Filters to text-capable channels.
 export async function listTextChannels(guildId: string): Promise<DiscordChannel[]> {
-  const res = await fetch(`${BASE}/guilds/${guildId}/channels`, { headers: headers() });
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/channels`, { headers: headers() });
   if (!res.ok) throw new Error(`discord channels ${res.status}: ${await res.text()}`);
   const channels = (await res.json()) as DiscordChannel[];
   const TEXT_TYPES = new Set<number>([
@@ -51,7 +99,7 @@ export async function listTextChannels(guildId: string): Promise<DiscordChannel[
 }
 
 export async function listRoles(guildId: string): Promise<DiscordRole[]> {
-  const res = await fetch(`${BASE}/guilds/${guildId}/roles`, { headers: headers() });
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/roles`, { headers: headers() });
   if (!res.ok) throw new Error(`discord roles ${res.status}: ${await res.text()}`);
   const roles = (await res.json()) as DiscordRole[];
   // Drop @everyone (id === guildId) and managed bot roles.
@@ -61,7 +109,7 @@ export async function listRoles(guildId: string): Promise<DiscordRole[]> {
 }
 
 export async function getGuild(guildId: string): Promise<DiscordGuild | null> {
-  const res = await fetch(`${BASE}/guilds/${guildId}`, { headers: headers() });
+  const res = await discordFetch(`${BASE}/guilds/${guildId}`, { headers: headers() });
   if (res.status === 404 || res.status === 403) return null;
   if (!res.ok) throw new Error(`discord guild ${res.status}: ${await res.text()}`);
   return res.json();
@@ -69,7 +117,7 @@ export async function getGuild(guildId: string): Promise<DiscordGuild | null> {
 
 // Guilds the bot is currently a member of.
 export async function listBotGuilds(): Promise<DiscordGuild[]> {
-  const res = await fetch(`${BASE}/users/@me/guilds`, { headers: headers() });
+  const res = await discordFetch(`${BASE}/users/@me/guilds`, { headers: headers() });
   if (!res.ok) throw new Error(`discord bot guilds ${res.status}: ${await res.text()}`);
   return res.json();
 }
@@ -79,7 +127,7 @@ export async function getGuildMember(
   guildId: string,
   userId: string
 ): Promise<{ roles: string[] } | null> {
-  const res = await fetch(`${BASE}/guilds/${guildId}/members/${userId}`, { headers: headers() });
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/members/${userId}`, { headers: headers() });
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`discord member ${res.status}: ${await res.text()}`);
   return res.json();
@@ -110,7 +158,7 @@ export async function sendButtonMessage(
   embed: { title: string; description: string; color?: number },
   rows: ActionRow[]
 ): Promise<DiscordMessage> {
-  const res = await fetch(`${BASE}/channels/${channelId}/messages`, {
+  const res = await discordFetch(`${BASE}/channels/${channelId}/messages`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({ embeds: [embed], components: rows }),
@@ -126,7 +174,7 @@ export async function editButtonMessage(
   embed: { title: string; description: string; color?: number },
   rows: ActionRow[]
 ): Promise<DiscordMessage> {
-  const res = await fetch(`${BASE}/channels/${channelId}/messages/${messageId}`, {
+  const res = await discordFetch(`${BASE}/channels/${channelId}/messages/${messageId}`, {
     method: "PATCH",
     headers: headers(),
     body: JSON.stringify({ embeds: [embed], components: rows }),
@@ -141,7 +189,7 @@ export async function createRole(
   guildId: string,
   params: { name: string; color: number; hoist?: boolean; mentionable?: boolean }
 ): Promise<{ id: string; name: string; color: number; position: number }> {
-  const res = await fetch(`${BASE}/guilds/${guildId}/roles`, {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/roles`, {
     method: "POST",
     headers: headers(),
     body: JSON.stringify({
@@ -157,7 +205,7 @@ export async function createRole(
 
 // Deletes a role from a guild. Removes it from every member who held it.
 export async function deleteRole(guildId: string, roleId: string): Promise<void> {
-  const res = await fetch(`${BASE}/guilds/${guildId}/roles/${roleId}`, {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/roles/${roleId}`, {
     method: "DELETE",
     headers: headers(),
   });
@@ -173,7 +221,7 @@ export async function setRolePositions(
   guildId: string,
   positions: Array<{ id: string; position: number }>
 ): Promise<void> {
-  const res = await fetch(`${BASE}/guilds/${guildId}/roles`, {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/roles`, {
     method: "PATCH",
     headers: headers(),
     body: JSON.stringify(positions),

@@ -4,12 +4,28 @@
 #
 # docker-compose runs two containers off this image with different commands.
 
-FROM node:20-alpine AS base
-WORKDIR /app
+# --- Base selection -------------------------------------------------------
+# Two parallel base stages; one is selected via the CORP_BASE build arg.
+# Each stage is independent — they both run `apk add` directly, with base-corp
+# injecting the corp CA *before* apk so the package fetch can succeed behind
+# a TLS-intercepting proxy. BuildKit only builds the stage that's referenced
+# below, so the COPY of corp-chain.pem in base-corp never fires in CI.
+#
+# Default (CI / prod / non-corp networks): base-clean.
+# Local dev behind a corp MITM proxy:  set CORP_BASE=base-corp in your .env
+# (docker-compose reads it automatically and passes it as --build-arg).
+#
+# Global ARG: must be declared before any FROM that uses it. Compose
+# overrides via build.args; the default kicks in when CORP_BASE is unset.
+ARG CORP_BASE=base-clean
 
-# Local-only: trust corp MITM CA before any network ops.
-# Alpine's apk reads /etc/ssl/cert.pem; node reads NODE_EXTRA_CA_CERTS.
-# Remove this block before deploying to AWS (or gate it with a build arg).
+FROM node:20-alpine AS base-clean
+WORKDIR /app
+RUN apk add --no-cache openssl libc6-compat ca-certificates
+ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
+FROM node:20-alpine AS base-corp
+WORKDIR /app
 COPY corp-chain.pem /tmp/corp-chain.pem
 RUN cat /tmp/corp-chain.pem >> /etc/ssl/cert.pem \
  && apk add --no-cache openssl libc6-compat ca-certificates \
@@ -17,6 +33,8 @@ RUN cat /tmp/corp-chain.pem >> /etc/ssl/cert.pem \
  && update-ca-certificates \
  && rm /tmp/corp-chain.pem
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt
+
+FROM ${CORP_BASE} AS base
 
 # --- deps ---
 FROM base AS deps

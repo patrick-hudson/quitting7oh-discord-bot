@@ -1,0 +1,68 @@
+# Production compose — for Lightsail / any host that pulls the image from CI
+# instead of building locally.
+#
+# Differences vs docker-compose.yml:
+#   - No `build:` blocks. Pulls a prebuilt image from GHCR.
+#   - Postgres data on a bind mount (/mnt/pgdata), not a named volume — see
+#     section 3 of LIGHTSAIL.md for the disk setup.
+#   - No host port exposed for Postgres (only the docker network needs it).
+#   - Reads BOT_IMAGE from the environment so you can pin a version:
+#       BOT_IMAGE=ghcr.io/patrick-hudson/quitting7oh-discord-bot:sha-abc1234
+#     If unset, falls back to :latest.
+#
+# Bring up: `docker compose -f docker-compose.prod.yml up -d`
+# Update :   `docker compose -f docker-compose.prod.yml pull && \
+#             docker compose -f docker-compose.prod.yml up -d`
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: quitting7oh
+    volumes:
+      - /mnt/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    image: ${BOT_IMAGE:-ghcr.io/patrick-hudson/quitting7oh-discord-bot:latest}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/quitting7oh?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Use `migrate deploy` once you've committed real migrations (see step 4
+    # of UPGRADE_PLAN.md). Until then, db push keeps the schema in sync.
+    command: npx prisma db push --skip-generate
+    restart: "no"
+
+  web:
+    image: ${BOT_IMAGE:-ghcr.io/patrick-hudson/quitting7oh-discord-bot:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/quitting7oh?schema=public
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "3000:3000"
+    command: npm run start
+
+  bot:
+    image: ${BOT_IMAGE:-ghcr.io/patrick-hudson/quitting7oh-discord-bot:latest}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/quitting7oh?schema=public
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    command: npm run bot:prod

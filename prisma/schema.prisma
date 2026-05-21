@@ -53,13 +53,17 @@ model MilestoneConfig {
 // Individual milestone (button) — many per guild. The button custom_id sent to
 // Discord is "milestone:<id>", so this row's id is the source of truth.
 model MilestoneTier {
-  id        String @id @default(cuid())
-  guildId   String
-  guild     Guild  @relation(fields: [guildId], references: [id], onDelete: Cascade)
-  label     String // human label shown on the button ("30 days")
-  emoji     String // unicode emoji ("🌱")
-  roleId    String // Discord role snowflake to grant
-  sortOrder Int    @default(0)
+  id               String  @id @default(cuid())
+  guildId          String
+  guild            Guild   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+  label            String // human label shown on the button ("30 days")
+  emoji            String // unicode emoji ("🌱")
+  roleId           String // Discord role snowflake to grant
+  sortOrder        Int     @default(0)
+  // Optional per-tier congrats template. Falls through to MilestoneConfig.congratsTemplate
+  // when null/empty, then to a baked-in default. Same placeholders as the
+  // config-level template: {user} {tier} {emoji} {claimChannel}.
+  congratsTemplate String? @db.Text
 
   @@index([guildId, sortOrder])
 }

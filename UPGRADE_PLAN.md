@@ -182,24 +182,9 @@ This generates `prisma/migrations/<timestamp>_init/` with the SQL. Commit it.
 
 ---
 
-## Step 5: Strip the corp-CA hack
+## Step 5 (no longer needed): Strip the corp-CA hack
 
-Local-only thing for the corp MITM. Has no place on Lightsail.
-
-**Edit [Dockerfile](Dockerfile):**
-
-Revert the base stage to:
-
-```dockerfile
-FROM node:20-alpine AS base
-WORKDIR /app
-RUN apk add --no-cache openssl libc6-compat
-```
-
-Delete `corp-chain.pem` from the repo.
-
-**Verify:**
-- `docker compose up -d --build` succeeds on any non-corp network (or in CI). On the corp laptop this'll fail at `apk add` — that's expected and is why this step lives behind a "before deploy" line.
+Obsolete — the Dockerfile now has a `CORP_BASE` build arg with `base-clean` as the default, and `corp-chain.pem` is in `.gitignore`. CI and prod builds use the clean stage automatically; only local dev opts into `base-corp` via `.env`. Leaving this section as a marker so the step numbering matches earlier commits.
 
 ---
 

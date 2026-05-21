@@ -66,15 +66,13 @@ export function registerMilestoneHandler(client: Client) {
 
       // Optional congrats post in a public channel — fire-and-forget so a
       // misconfigured channel never breaks the role claim itself.
-      if (
-        config?.congratsEnabled &&
-        config.congratsChannelId &&
-        config.congratsTemplate
-      ) {
+      // Per-tier template wins over the config-level one.
+      const congratsText = tier.congratsTemplate || config?.congratsTemplate;
+      if (config?.congratsEnabled && config.congratsChannelId && congratsText) {
         try {
           const channel = await client.channels.fetch(config.congratsChannelId);
           if (channel && channel.isTextBased() && "send" in channel) {
-            const text = config.congratsTemplate
+            const text = congratsText
               .replace(/\{user\}/g, `<@${interaction.user.id}>`)
               .replace(/\{tier\}/g, tier.label)
               .replace(/\{emoji\}/g, tier.emoji)

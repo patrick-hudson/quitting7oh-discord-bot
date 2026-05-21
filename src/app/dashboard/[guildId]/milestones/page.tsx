@@ -4,13 +4,66 @@ import { THEMES } from "@/lib/milestone-themes";
 import { MilestoneForm } from "@/components/MilestoneForm";
 
 const DEFAULT_TIERS = [
-  { label: "24 hours", emoji: "⏰" },
-  { label: "30 days", emoji: "🌱" },
-  { label: "60 days", emoji: "🌿" },
-  { label: "90 days", emoji: "🌳" },
-  { label: "6 months", emoji: "💎" },
-  { label: "1 year", emoji: "🏆" },
-  { label: "2+ years", emoji: "👑" },
+  {
+    label: "24 hours",
+    emoji: "⏰",
+    congratsTemplate:
+      "{emoji} {user} just made it through day one — the hardest day. We see you. Keep showing up.",
+  },
+  {
+    label: "3 days",
+    emoji: "💪",
+    congratsTemplate:
+      "{emoji} {user} hit **3 days**. Three of the hardest mornings in a row — your brain is healing right now. Don't stop now.",
+  },
+  {
+    label: "1 week",
+    emoji: "🌤️",
+    congratsTemplate:
+      "{emoji} {user} crossed **1 WEEK** clean. Seven days of choosing yourself when every part of you wanted to quit choosing. The fog is starting to lift — keep going.",
+  },
+  {
+    label: "2 weeks",
+    emoji: "🌈",
+    congratsTemplate:
+      "{emoji} {user} hit **2 WEEKS**. The acute fight is winding down and you're still standing. That's everything. You're doing this.",
+  },
+  {
+    label: "30 days",
+    emoji: "🌱",
+    congratsTemplate:
+      "{emoji} {user} hit **30 days**. A full month of choosing yourself, every day. Proud of you.",
+  },
+  {
+    label: "60 days",
+    emoji: "🌿",
+    congratsTemplate:
+      "{emoji} {user} just crossed **60 days**. Two months in, and the roots are taking hold.",
+  },
+  {
+    label: "90 days",
+    emoji: "🌳",
+    congratsTemplate:
+      "{emoji} {user} reached **90 days** — a quarter year clean. That's real, durable progress.",
+  },
+  {
+    label: "6 months",
+    emoji: "💎",
+    congratsTemplate:
+      "{emoji} {user} hit **6 MONTHS**. Half a year of discipline showing up. Massive respect.",
+  },
+  {
+    label: "1 year",
+    emoji: "🏆",
+    congratsTemplate:
+      "{emoji} {user} just crossed **1 YEAR**. 365 days of choosing recovery — you're an inspiration to this whole community.",
+  },
+  {
+    label: "2+ years",
+    emoji: "👑",
+    congratsTemplate:
+      "{emoji} {user} crossed **2+ YEARS**. Living proof this works. Thank you for being here and showing the way.",
+  },
 ];
 
 const DEFAULT_CONGRATS_TEMPLATE =
@@ -54,12 +107,14 @@ export default async function MilestonesPage({
           emoji: t.emoji,
           roleId: t.roleId,
           sortOrder: t.sortOrder,
+          congratsTemplate: t.congratsTemplate ?? "",
         }))
       : DEFAULT_TIERS.map((d, i) => ({
           label: d.label,
           emoji: d.emoji,
           roleId: "",
           sortOrder: i,
+          congratsTemplate: d.congratsTemplate,
         }));
 
   return (

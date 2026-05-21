@@ -10,6 +10,7 @@ const tierSchema = z.object({
   emoji: z.string().min(1).max(8),
   roleId: z.string().regex(/^\d{17,21}$/, "Invalid role ID"),
   sortOrder: z.number().int().min(0).max(99),
+  congratsTemplate: z.string().max(2000).optional().or(z.literal("")).or(z.null()),
 });
 
 const configSchema = z.object({
@@ -109,8 +110,10 @@ export const PATCH = withErrors(async (
         NOT: { id: { in: input.tiers.filter((t) => t.id).map((t) => t.id!) } },
       },
     }),
-    ...input.tiers.map((t) =>
-      t.id
+    ...input.tiers.map((t) => {
+      const tierCongrats =
+        t.congratsTemplate && t.congratsTemplate.length > 0 ? t.congratsTemplate : null;
+      return t.id
         ? prisma.milestoneTier.update({
             where: { id: t.id },
             data: {
@@ -118,6 +121,7 @@ export const PATCH = withErrors(async (
               emoji: t.emoji,
               roleId: t.roleId,
               sortOrder: t.sortOrder,
+              congratsTemplate: tierCongrats,
             },
           })
         : prisma.milestoneTier.create({
@@ -127,9 +131,10 @@ export const PATCH = withErrors(async (
               emoji: t.emoji,
               roleId: t.roleId,
               sortOrder: t.sortOrder,
+              congratsTemplate: tierCongrats,
             },
-          })
-    ),
+          });
+    }),
   ]);
 
   const tiers = await prisma.milestoneTier.findMany({

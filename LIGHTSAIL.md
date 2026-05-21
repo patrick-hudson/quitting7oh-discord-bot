@@ -8,19 +8,11 @@ This document covers everything you need to do to take what's running locally an
 
 Before you deploy, walk back the things in this repo that exist only to make the corp-network laptop work.
 
-### Remove the corp CA from the Dockerfile
+### Confirm `CORP_BASE` is unset
 
-The base stage in [Dockerfile](Dockerfile) currently injects `corp-chain.pem` into the image so `apk` and `npm` trust a MITM cert. Lightsail's network has none of that — the COPY will fail outright if the file isn't checked in, and trusting an unknown CA on a public host is a real (small) security smell.
+The Dockerfile has two base stages — `base-clean` (default) and `base-corp` (only used when you're behind a TLS-intercepting corp proxy locally). Selection happens via the `CORP_BASE` build arg, which docker-compose reads from `.env`.
 
-Revert the base stage to:
-
-```dockerfile
-FROM node:20-alpine AS base
-WORKDIR /app
-RUN apk add --no-cache openssl libc6-compat
-```
-
-And delete `corp-chain.pem` from the repo (it shouldn't be committed anyway).
+For Lightsail: don't set `CORP_BASE` in the prod `.env`. Default is `base-clean`, which is what you want — no corp cert in the image, smaller surface area. The `corp-chain.pem` file is in `.gitignore` so it's never on the prod host anyway.
 
 ### Switch from `db push` to real migrations
 
@@ -95,14 +87,7 @@ sudo mount /dev/xvdf /mnt/pgdata
 echo "/dev/xvdf /mnt/pgdata ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
 ```
 
-4. Update [docker-compose.yml](docker-compose.yml) to use a bind mount instead of a named volume:
-
-```yaml
-volumes:
-  - /mnt/pgdata:/var/lib/postgresql/data
-```
-
-(Remove the `postgres_data:` named volume entry under top-level `volumes:` if you do this.)
+4. [docker-compose.prod.yml](docker-compose.prod.yml) already mounts `/mnt/pgdata` into the Postgres container, so nothing to edit. If your device name from step 3 is different (e.g. `/dev/nvme1n1`), the mount point on the host still ends up at `/mnt/pgdata` — that's what compose looks for.
 
 5. **Snapshot schedule**: Lightsail → Storage → your disk → Enable automatic snapshots, daily, 02:00 local. Retention 7 days. Nightly snapshots have saved more bacon than any other single thing in ops.
 
@@ -129,17 +114,46 @@ sudo usermod -aG docker $USER
 newgrp docker
 ```
 
-Then get the code and env onto the box:
+### Pull the prebuilt image from GHCR
+
+Pushing to `main` runs [.github/workflows/build.yml](.github/workflows/build.yml), which builds the Docker image and pushes it to `ghcr.io/patrick-hudson/quitting7oh-discord-bot`. No need to clone the repo or build on the Lightsail box.
+
+**One-time GHCR auth** (the package is private by default):
 
 ```bash
-git clone <your-repo-url> quitting7oh-bot
-cd quitting7oh-bot
-scp local-machine:~/quitting7oh-bot/.env .       # or however you ship .env
-docker compose up -d --build
-docker compose logs -f
+# On GitHub: Settings → Developer settings → Personal access tokens → Tokens (classic)
+# Create a token with the `read:packages` scope only. Paste it as the password below.
+echo "$GHCR_PAT" | docker login ghcr.io -u <your-github-username> --password-stdin
+```
+
+Alternatively, after the first push: go to the package's settings on GitHub → Change visibility → Public. Anyone can then `docker pull` without auth.
+
+**Get the compose file and `.env` onto the box.** You only need two files; no code:
+
+```bash
+mkdir -p ~/quitting7oh-bot && cd ~/quitting7oh-bot
+# from your laptop:
+scp docker-compose.prod.yml .env <lightsail-user>@<lightsail-ip>:~/quitting7oh-bot/
+```
+
+**Bring it up:**
+
+```bash
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
+docker compose -f docker-compose.prod.yml logs -f
 ```
 
 Watch for the `migrate` service to exit cleanly, then `web` and `bot` to start. The bot logs `[bot] logged in as <name>` when it's actually connected to Discord.
+
+**Pin a version instead of rolling on `latest`** (recommended for prod — see the GHCR push for the exact tag, e.g. `2026.05.21.42` or `sha-abc1234`):
+
+```bash
+# in ~/quitting7oh-bot/.env on the host
+BOT_IMAGE=ghcr.io/patrick-hudson/quitting7oh-discord-bot:2026.05.21.42
+```
+
+Then `pull && up -d` deploys exactly that build. To upgrade, change the line and re-run.
 
 ---
 
@@ -205,11 +219,15 @@ After HTTPS is up, set `NEXTAUTH_URL=https://bot.example.com` in `.env` and `doc
 
 ### Restarts and updates
 
+You don't build on the host. Push to `main`, wait for the GitHub Actions run to finish (see the Actions tab), then on the box:
+
 ```bash
 cd ~/quitting7oh-bot
-git pull
-docker compose up -d --build
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d
 ```
+
+The `pull` grabs the new `:latest` (or whatever `BOT_IMAGE` is pinned to in `.env`); `up -d` recreates only the services whose image changed. Postgres keeps running.
 
 `restart: unless-stopped` on each service means containers come back after the instance reboots. No systemd unit needed.
 
@@ -238,9 +256,12 @@ The schema doesn't change — just swap the connection string and re-run `docker
 
 ## 8. First-deploy checklist
 
-- [ ] Reverted Dockerfile corp-CA block, deleted `corp-chain.pem`.
-- [ ] Generated `prisma/migrations/` locally, committed it, switched compose to `migrate deploy`.
-- [ ] `.env` on the server has prod values (real `NEXTAUTH_URL`, fresh `AUTH_SECRET`, correct admin IDs).
+- [ ] `CORP_BASE` is unset in the prod `.env` (Dockerfile defaults to `base-clean`, no corp cert injected).
+- [ ] Generated `prisma/migrations/` locally, committed it, switched the compose `migrate` command to `prisma migrate deploy`.
+- [ ] GitHub Actions push-to-main run is green; image is visible at `ghcr.io/patrick-hudson/quitting7oh-discord-bot`.
+- [ ] On the box: `docker login ghcr.io` succeeded (or package made public).
+- [ ] `docker-compose.prod.yml` + `.env` are on the box at `~/quitting7oh-bot/`.
+- [ ] `.env` on the server has prod values (real `NEXTAUTH_URL`, fresh `AUTH_SECRET`, correct admin IDs); optionally `BOT_IMAGE` pinned to a specific tag.
 - [ ] Static IP attached, DNS resolving, firewall lets in 80/443 only.
 - [ ] Persistent disk mounted at `/mnt/pgdata`, daily snapshots on.
 - [ ] HTTPS working — `curl -I https://bot.example.com` returns 200 or 302.

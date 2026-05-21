@@ -9,6 +9,7 @@ type Tier = {
   emoji: string;
   roleId: string;
   sortOrder: number;
+  congratsTemplate: string;
 };
 
 type ThemeOption = {
@@ -60,6 +61,7 @@ export function MilestoneForm({
   const [pendingDeletes, setPendingDeletes] = useState<
     Array<{ id: string; name: string; color: number }> | null
   >(null);
+  const [expandedTier, setExpandedTier] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
 
@@ -69,7 +71,7 @@ export function MilestoneForm({
   function addTier() {
     setTiers((prev) => [
       ...prev,
-      { label: "", emoji: "✨", roleId: "", sortOrder: prev.length },
+      { label: "", emoji: "✨", roleId: "", sortOrder: prev.length, congratsTemplate: "" },
     ]);
   }
   function removeTier(i: number) {
@@ -326,65 +328,105 @@ export function MilestoneForm({
           {tiers.map((t, i) => (
             <div
               key={t.id ?? `new-${i}`}
-              className="grid grid-cols-[40px_1fr_2fr_auto] items-center gap-2 rounded-lg bg-white/[0.03] p-2 ring-1 ring-white/5"
+              className="rounded-lg bg-white/[0.03] p-2 ring-1 ring-white/5"
             >
-              <input
-                value={t.emoji}
-                onChange={(e) => setTier(i, { emoji: e.target.value })}
-                maxLength={8}
-                className={`${inputClass} text-center`}
-                aria-label="Emoji"
-              />
-              <input
-                value={t.label}
-                onChange={(e) => setTier(i, { label: e.target.value })}
-                placeholder="Label, e.g. 30 days"
-                className={inputClass}
-                aria-label="Label"
-              />
-              <select
-                value={t.roleId}
-                onChange={(e) => setTier(i, { roleId: e.target.value })}
-                className={inputClass}
-                aria-label="Role"
-              >
-                <option value="" className="bg-neutral-900">
-                  — pick a role —
-                </option>
-                {roles.map((r) => (
-                  <option key={r.id} value={r.id} className="bg-neutral-900">
-                    @{r.name}
+              <div className="grid grid-cols-[40px_1fr_2fr_auto] items-center gap-2">
+                <input
+                  value={t.emoji}
+                  onChange={(e) => setTier(i, { emoji: e.target.value })}
+                  maxLength={8}
+                  className={`${inputClass} text-center`}
+                  aria-label="Emoji"
+                />
+                <input
+                  value={t.label}
+                  onChange={(e) => setTier(i, { label: e.target.value })}
+                  placeholder="Label, e.g. 30 days"
+                  className={inputClass}
+                  aria-label="Label"
+                />
+                <select
+                  value={t.roleId}
+                  onChange={(e) => setTier(i, { roleId: e.target.value })}
+                  className={inputClass}
+                  aria-label="Role"
+                >
+                  <option value="" className="bg-neutral-900">
+                    — pick a role —
                   </option>
-                ))}
-              </select>
-              <div className="flex gap-1 text-xs text-white/40">
-                <button
-                  type="button"
-                  onClick={() => move(i, -1)}
-                  disabled={i === 0}
-                  className="rounded px-1.5 py-1 hover:bg-white/10 disabled:opacity-30"
-                  aria-label="Move up"
-                >
-                  ↑
-                </button>
-                <button
-                  type="button"
-                  onClick={() => move(i, 1)}
-                  disabled={i === tiers.length - 1}
-                  className="rounded px-1.5 py-1 hover:bg-white/10 disabled:opacity-30"
-                  aria-label="Move down"
-                >
-                  ↓
-                </button>
-                <button
-                  type="button"
-                  onClick={() => removeTier(i)}
-                  className="rounded px-1.5 py-1 text-red-300 hover:bg-red-500/10"
-                  aria-label="Remove"
-                >
-                  ✕
-                </button>
+                  {roles.map((r) => (
+                    <option key={r.id} value={r.id} className="bg-neutral-900">
+                      @{r.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex gap-1 text-xs text-white/40">
+                  <button
+                    type="button"
+                    onClick={() => setExpandedTier(expandedTier === i ? null : i)}
+                    className={`rounded px-1.5 py-1 hover:bg-white/10 ${
+                      t.congratsTemplate ? "text-emerald-300" : ""
+                    }`}
+                    aria-label={t.congratsTemplate ? "Custom message set" : "Set custom message"}
+                    title={
+                      t.congratsTemplate
+                        ? "Custom congrats message set — click to edit"
+                        : "Add a custom congrats message for this tier"
+                    }
+                  >
+                    ✉
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => move(i, -1)}
+                    disabled={i === 0}
+                    className="rounded px-1.5 py-1 hover:bg-white/10 disabled:opacity-30"
+                    aria-label="Move up"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => move(i, 1)}
+                    disabled={i === tiers.length - 1}
+                    className="rounded px-1.5 py-1 hover:bg-white/10 disabled:opacity-30"
+                    aria-label="Move down"
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeTier(i)}
+                    className="rounded px-1.5 py-1 text-red-300 hover:bg-red-500/10"
+                    aria-label="Remove"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
+
+              {expandedTier === i && (
+                <div className="mt-2 border-t border-white/5 pt-2">
+                  <label className="mb-1 block text-xs text-white/60">
+                    Custom congrats message for <strong>{t.label || "this tier"}</strong>
+                  </label>
+                  <textarea
+                    value={t.congratsTemplate}
+                    onChange={(e) => setTier(i, { congratsTemplate: e.target.value })}
+                    rows={3}
+                    placeholder="Leave blank to fall back to the global template below."
+                    className={inputClass}
+                  />
+                  <p className="mt-1 text-xs text-white/40">
+                    Placeholders:
+                    <code className="ml-1 text-white/60">{`{user}`}</code>
+                    <code className="ml-1 text-white/60">{`{tier}`}</code>
+                    <code className="ml-1 text-white/60">{`{emoji}`}</code>
+                    <code className="ml-1 text-white/60">{`{claimChannel}`}</code>. Wins
+                    over the global template when set.
+                  </p>
+                </div>
+              )}
             </div>
           ))}
         </div>

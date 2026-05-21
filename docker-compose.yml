@@ -17,7 +17,10 @@ services:
       retries: 10
 
   migrate:
-    build: .
+    build:
+      context: .
+      args:
+        CORP_BASE: ${CORP_BASE:-base-clean}
     env_file: .env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/quitting7oh?schema=public
@@ -28,7 +31,10 @@ services:
     restart: "no"
 
   web:
-    build: .
+    build:
+      context: .
+      args:
+        CORP_BASE: ${CORP_BASE:-base-clean}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -41,7 +47,10 @@ services:
     command: npm run start
 
   bot:
-    build: .
+    build:
+      context: .
+      args:
+        CORP_BASE: ${CORP_BASE:-base-clean}
     restart: unless-stopped
     env_file: .env
     environment:
