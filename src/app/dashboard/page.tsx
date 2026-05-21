@@ -12,7 +12,7 @@ export default async function DashboardIndex() {
       <main className="mx-auto max-w-2xl px-6 py-20 text-center">
         <h1 className="text-2xl font-semibold">No accessible guilds</h1>
         <p className="mt-2 text-white/60">
-          You're signed in as <span className="text-white">{session.user.name}</span>, but no
+          You&apos;re signed in as <span className="text-white">{session.user.name}</span>, but no
           Discord guild grants you access yet.
         </p>
         <p className="mt-4 text-sm text-white/50">

@@ -73,7 +73,7 @@ export function SettingsForm({
           )}
         </select>
         <p className="mt-1 text-xs text-white/40">
-          Used to interpret cron expressions for posts that don't override it.
+          Used to interpret cron expressions for posts that don&apos;t override it.
         </p>
       </div>
 
@@ -94,7 +94,7 @@ export function SettingsForm({
           ))}
         </select>
         <p className="mt-1 text-xs text-white/40">
-          Discord users with this role gain access to this guild's posts in the portal.
+          Discord users with this role gain access to this guild&apos;s posts in the portal.
         </p>
       </div>
 
