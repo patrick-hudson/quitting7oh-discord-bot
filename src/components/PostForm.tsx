@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChannelPicker } from "./ChannelPicker";
+import { DiscordPreview } from "./DiscordPreview";
 
 type Channel = { id: string; name: string; parent_id: string | null };
 type Role = { id: string; name: string; color: number };
@@ -340,6 +341,26 @@ export function PostForm({
             ))}
           </select>
         </Field>
+      </Section>
+
+      <Section title="Preview">
+        <p className="mb-2 text-xs text-white/40">
+          What this will look like in Discord. Timestamps use your local clock
+          and the current lead time; each viewer sees them in their own
+          timezone when the bot actually fires.
+        </p>
+        <DiscordPreview
+          useEmbed={values.useEmbed}
+          content={values.content}
+          embedTitle={values.embedTitle}
+          embedColor={values.embedColor}
+          embedUrl={values.embedUrl}
+          embedImage={values.embedImage}
+          mentionRoleId={values.mentionRoleId}
+          leadMinutes={values.leadMinutes}
+          roles={roles}
+          channels={channels}
+        />
       </Section>
 
       <Section title="State">
