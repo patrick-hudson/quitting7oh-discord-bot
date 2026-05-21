@@ -185,19 +185,31 @@ export async function editButtonMessage(
 
 // Creates a role in a guild. Requires MANAGE_ROLES on the bot. New roles are
 // placed at position 1 (just above @everyone); admins can drag them higher.
+// unicode_emoji shows up as the role icon next to member names; requires the
+// guild to have boost level 2 (15 boosts). If the API rejects on the icon
+// alone, the caller can retry without it.
 export async function createRole(
   guildId: string,
-  params: { name: string; color: number; hoist?: boolean; mentionable?: boolean }
+  params: {
+    name: string;
+    color: number;
+    hoist?: boolean;
+    mentionable?: boolean;
+    unicodeEmoji?: string;
+  }
 ): Promise<{ id: string; name: string; color: number; position: number }> {
+  const payload: Record<string, unknown> = {
+    name: params.name,
+    color: params.color,
+    hoist: params.hoist ?? false,
+    mentionable: params.mentionable ?? false,
+  };
+  if (params.unicodeEmoji) payload.unicode_emoji = params.unicodeEmoji;
+
   const res = await discordFetch(`${BASE}/guilds/${guildId}/roles`, {
     method: "POST",
     headers: headers(),
-    body: JSON.stringify({
-      name: params.name,
-      color: params.color,
-      hoist: params.hoist ?? false,
-      mentionable: params.mentionable ?? false,
-    }),
+    body: JSON.stringify(payload),
   });
   if (!res.ok) throw new Error(`discord createRole ${res.status}: ${await res.text()}`);
   return res.json();

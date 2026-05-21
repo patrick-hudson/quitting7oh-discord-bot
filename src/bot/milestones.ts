@@ -72,7 +72,11 @@ export function registerMilestoneHandler(client: Client) {
         try {
           const channel = await client.channels.fetch(config.congratsChannelId);
           if (channel && channel.isTextBased() && "send" in channel) {
-            const text = congratsText
+            // Always include a pointer to the claim channel. If the template
+            // has {claimChannel} we use the author's placement; otherwise we
+            // append a default line on a new line.
+            const hasClaimPlaceholder = /\{claimChannel\}/.test(congratsText);
+            let text = congratsText
               .replace(/\{user\}/g, `<@${interaction.user.id}>`)
               .replace(/\{tier\}/g, tier.label)
               .replace(/\{emoji\}/g, tier.emoji)
@@ -80,6 +84,9 @@ export function registerMilestoneHandler(client: Client) {
                 /\{claimChannel\}/g,
                 config.channelId ? `<#${config.channelId}>` : ""
               );
+            if (!hasClaimPlaceholder && config.channelId) {
+              text += `\nClaim yours in <#${config.channelId}>.`;
+            }
             await channel.send({
               content: text,
               allowedMentions: { users: [interaction.user.id] },

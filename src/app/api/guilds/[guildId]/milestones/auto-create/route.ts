@@ -81,13 +81,44 @@ export const POST = withErrors(async (
         color: hexToInt(theme.colors[i]),
         hoist: false,
         mentionable: false,
+        unicodeEmoji: existing[i].emoji,
       });
       createdRoleIds.push(role.id);
       created++;
     } catch (err) {
+      // Role icons require boost level 2. If the failure was specifically
+      // about boosts/role-icons, retry without it so the rest of the flow
+      // still works on un-boosted servers. Discord error code 50101 = "This
+      // server needs more boosts to perform this action."
+      const msg = (err as Error).message;
+      const isBoostError =
+        msg.includes("unicode_emoji") ||
+        msg.includes("ROLE_ICONS") ||
+        msg.includes("more boosts") ||
+        msg.includes("50101");
+      if (isBoostError) {
+        try {
+          const role = await createRole(guildId, {
+            name: labels[i],
+            color: hexToInt(theme.colors[i]),
+            hoist: false,
+            mentionable: false,
+          });
+          createdRoleIds.push(role.id);
+          created++;
+          continue;
+        } catch (retryErr) {
+          return NextResponse.json(
+            {
+              error: `Failed creating role "${labels[i]}" even without icon: ${(retryErr as Error).message}.`,
+            },
+            { status: 500 }
+          );
+        }
+      }
       return NextResponse.json(
         {
-          error: `Failed creating role "${labels[i]}": ${(err as Error).message}. ` +
+          error: `Failed creating role "${labels[i]}": ${msg}. ` +
             `Confirm the bot has Manage Roles permission.`,
         },
         { status: 500 }
@@ -105,36 +136,51 @@ export const POST = withErrors(async (
     )
   );
 
-  // Reposition: highest-sortOrder tier sits closest to (just below) the
-  // anchor; lowest tier sits furthest below. So the role list reads, top-down:
-  //   ... anchor ...
-  //   2+ years
+  // Always reposition so the milestone group reads top-down by advancement:
+  //   ... [optional anchor: e.g. @Moderator] ...
+  //   2+ years      ← highest sortOrder, top of milestone group
   //   1 year
   //   ...
-  //   24 hours
+  //   24 hours      ← lowest sortOrder, bottom of milestone group
   //   @everyone
-  if (belowRoleId) {
-    try {
-      const allRoles = await listRoles(guildId);
+  //
+  // Anchor selection:
+  //   - belowRoleId set      → slot directly under that role
+  //   - belowRoleId not set  → use the highest-positioned newly-created role
+  //                            as the ceiling, so the milestone group sits
+  //                            where Discord put it and just gets internally
+  //                            ordered with the most-advanced tier on top.
+  try {
+    const allRoles = await listRoles(guildId);
+    const newRoleMeta = createdRoleIds
+      .map((id) => allRoles.find((r) => r.id === id))
+      .filter((r): r is NonNullable<typeof r> => Boolean(r));
+
+    let rawCeiling: number;
+    if (belowRoleId) {
       const anchor = allRoles.find((r) => r.id === belowRoleId);
-      if (anchor) {
-        // Only reposition rows we actually just created (or all, if replaceAll).
-        // We use the freshly-applied roleIds in `createdRoleIds`, ordered by
-        // tier sortOrder ascending. We want highest sortOrder closest to anchor.
-        const positions = createdRoleIds
-          .map((id, i) => ({ id, sortOrder: existing[i].sortOrder }))
-          .sort((a, b) => b.sortOrder - a.sortOrder) // highest sortOrder first
-          .map((row, i) => ({
-            id: row.id,
-            position: Math.max(1, anchor.position - 1 - i),
-          }));
-        await setRolePositions(guildId, positions);
-      }
-    } catch (err) {
-      // Don't fail the whole flow if repositioning hits a permissions snag —
-      // the roles exist and are linked, the user can drag them by hand.
-      console.warn("[milestones] reposition failed:", err);
+      rawCeiling = anchor
+        ? anchor.position - 1
+        : Math.max(...newRoleMeta.map((r) => r.position));
+    } else {
+      rawCeiling = Math.max(...newRoleMeta.map((r) => r.position));
     }
+    // Make sure the lowest tier doesn't get clamped to 1 colliding with the
+    // second-lowest. Need at least `numTiers` headroom above @everyone.
+    const ceiling = Math.max(rawCeiling, createdRoleIds.length);
+
+    const positions = createdRoleIds
+      .map((id, i) => ({ id, sortOrder: existing[i].sortOrder }))
+      .sort((a, b) => b.sortOrder - a.sortOrder) // highest sortOrder first
+      .map((row, i) => ({
+        id: row.id,
+        position: ceiling - i,
+      }));
+    await setRolePositions(guildId, positions);
+  } catch (err) {
+    // Don't fail the whole flow if repositioning hits a permissions snag —
+    // the roles exist and are linked, the user can drag them by hand.
+    console.warn("[milestones] reposition failed:", err);
   }
 
   // Delete the old Discord roles that we just replaced. Best-effort — if the

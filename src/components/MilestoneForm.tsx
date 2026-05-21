@@ -50,6 +50,7 @@ export function MilestoneForm({
   const [messageId, setMessageId] = useState(initial.messageId);
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [reordering, setReordering] = useState(false);
   const [autoCreating, setAutoCreating] = useState(false);
   const [themeId, setThemeId] = useState(themes[0]?.id ?? "");
   const [replaceAll, setReplaceAll] = useState(false);
@@ -110,7 +111,18 @@ export function MilestoneForm({
     setSaving(false);
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
-      setError(d.error ?? `Save failed (${res.status})`);
+      let msg = d.error ?? `Save failed (${res.status})`;
+      if (Array.isArray(d.issues) && d.issues.length > 0) {
+        const details = d.issues
+          .slice(0, 3)
+          .map((i: { path?: unknown[]; message?: string }) => {
+            const path = (i.path ?? []).join(".") || "(root)";
+            return `${path}: ${i.message}`;
+          })
+          .join("; ");
+        msg += ` — ${details}`;
+      }
+      setError(msg);
       return false;
     }
     const data = await res.json();
@@ -167,7 +179,18 @@ export function MilestoneForm({
     setAutoCreating(false);
     if (!res.ok) {
       const d = await res.json().catch(() => ({}));
-      setError(d.error ?? `Auto-create failed (${res.status})`);
+      let msg = d.error ?? `Auto-create failed (${res.status})`;
+      if (Array.isArray(d.issues) && d.issues.length > 0) {
+        const details = d.issues
+          .slice(0, 3)
+          .map((i: { path?: unknown[]; message?: string }) => {
+            const path = (i.path ?? []).join(".") || "(root)";
+            return `${path}: ${i.message}`;
+          })
+          .join("; ");
+        msg += ` — ${details}`;
+      }
+      setError(msg);
       return;
     }
     const data = await res.json();
@@ -186,6 +209,29 @@ export function MilestoneForm({
     }
     setInfo(msg);
     router.refresh();
+  }
+
+  async function reorder() {
+    setReordering(true);
+    setError(null);
+    setInfo(null);
+    const res = await fetch(`/api/guilds/${guildId}/milestones/reorder`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ belowRoleId: belowRoleId || null }),
+    });
+    setReordering(false);
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      setError(d.error ?? `Reorder failed (${res.status})`);
+      return;
+    }
+    const data = await res.json();
+    const detail = data.summary ? ` (${data.summary})` : "";
+    setInfo(
+      `Reordered ${data.repositioned} milestone role(s)${detail}. ` +
+        `Refresh Discord if the order doesn't change immediately — client caches role positions.`
+    );
   }
 
   async function publish() {
@@ -509,14 +555,25 @@ export function MilestoneForm({
           Replace existing roleIds (creates new Discord roles even for tiers already linked)
         </label>
 
-        <button
-          type="button"
-          onClick={requestAutoCreate}
-          disabled={autoCreating || saving || publishing}
-          className="mt-3 rounded-lg bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 disabled:opacity-50"
-        >
-          {autoCreating ? "Creating roles…" : "Create roles in Discord"}
-        </button>
+        <div className="mt-3 flex gap-2">
+          <button
+            type="button"
+            onClick={requestAutoCreate}
+            disabled={autoCreating || saving || publishing || reordering}
+            className="rounded-lg bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 disabled:opacity-50"
+          >
+            {autoCreating ? "Creating roles…" : "Create roles in Discord"}
+          </button>
+          <button
+            type="button"
+            onClick={reorder}
+            disabled={autoCreating || saving || publishing || reordering}
+            className="rounded-lg bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/15 disabled:opacity-50"
+            title="Reposition the already-linked Discord roles so 2+ years sits on top and 24 hours sits at the bottom. Doesn't touch role colors, names, or membership."
+          >
+            {reordering ? "Reordering…" : "Fix role order"}
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/5">

@@ -8,7 +8,7 @@ const tierSchema = z.object({
   id: z.string().optional(), // present for existing rows, absent for new ones
   label: z.string().min(1).max(80),
   emoji: z.string().min(1).max(8),
-  roleId: z.string().regex(/^\d{17,21}$/, "Invalid role ID"),
+  roleId: z.string().regex(/^\d{17,21}$/, "Invalid role ID").or(z.literal("")),
   sortOrder: z.number().int().min(0).max(99),
   congratsTemplate: z.string().max(2000).optional().or(z.literal("")).or(z.null()),
 });
