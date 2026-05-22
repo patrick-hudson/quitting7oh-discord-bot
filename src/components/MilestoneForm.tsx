@@ -9,8 +9,24 @@ type Tier = {
   emoji: string;
   roleId: string;
   sortOrder: number;
-  congratsTemplate: string;
+  // Roster of congrats messages — one per line in the textarea. Blank lines
+  // are stripped on save; the bot picks one at random per claim, avoiding the
+  // last one used.
+  congratsTemplates: string[];
 };
+
+// Convert a roster array to the textarea value users edit.
+function rosterToText(roster: string[]): string {
+  return roster.join("\n");
+}
+
+// Split textarea content back into a roster, dropping blank/whitespace-only lines.
+function textToRoster(text: string): string[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+}
 
 type ThemeOption = {
   id: string;
@@ -35,8 +51,8 @@ export function MilestoneForm({
     messageId: string | null;
     congratsEnabled: boolean;
     congratsChannelId: string;
-    congratsTemplate: string;
-    ephemeralTemplate: string;
+    congratsTemplates: string[];
+    ephemeralTemplates: string[];
   };
   channels: Array<{ id: string; name: string }>;
   roles: Array<{ id: string; name: string; color: number }>;
@@ -57,8 +73,14 @@ export function MilestoneForm({
   const [belowRoleId, setBelowRoleId] = useState("");
   const [congratsEnabled, setCongratsEnabled] = useState(initial.congratsEnabled);
   const [congratsChannelId, setCongratsChannelId] = useState(initial.congratsChannelId);
-  const [congratsTemplate, setCongratsTemplate] = useState(initial.congratsTemplate);
-  const [ephemeralTemplate, setEphemeralTemplate] = useState(initial.ephemeralTemplate);
+  // The textareas hold the raw newline-separated string. We split into an
+  // array on save and join on load so users can paste/edit freely.
+  const [congratsTemplatesText, setCongratsTemplatesText] = useState(
+    rosterToText(initial.congratsTemplates)
+  );
+  const [ephemeralTemplatesText, setEphemeralTemplatesText] = useState(
+    rosterToText(initial.ephemeralTemplates)
+  );
   const [pendingDeletes, setPendingDeletes] = useState<
     Array<{ id: string; name: string; color: number }> | null
   >(null);
@@ -72,7 +94,7 @@ export function MilestoneForm({
   function addTier() {
     setTiers((prev) => [
       ...prev,
-      { label: "", emoji: "✨", roleId: "", sortOrder: prev.length, congratsTemplate: "" },
+      { label: "", emoji: "✨", roleId: "", sortOrder: prev.length, congratsTemplates: [] },
     ]);
   }
   function removeTier(i: number) {
@@ -101,11 +123,15 @@ export function MilestoneForm({
         channelId: channelId || null,
         title,
         description,
-        tiers,
+        // Strip blank lines on the way to the server so the stored roster is clean.
+        tiers: tiers.map((t) => ({
+          ...t,
+          congratsTemplates: t.congratsTemplates.filter((s) => s.trim().length > 0),
+        })),
         congratsEnabled,
         congratsChannelId: congratsChannelId || null,
-        congratsTemplate: congratsTemplate || null,
-        ephemeralTemplate: ephemeralTemplate || null,
+        congratsTemplates: textToRoster(congratsTemplatesText),
+        ephemeralTemplates: textToRoster(ephemeralTemplatesText),
       }),
     });
     setSaving(false);
@@ -411,13 +437,17 @@ export function MilestoneForm({
                     type="button"
                     onClick={() => setExpandedTier(expandedTier === i ? null : i)}
                     className={`rounded px-1.5 py-1 hover:bg-white/10 ${
-                      t.congratsTemplate ? "text-emerald-300" : ""
+                      t.congratsTemplates.length > 0 ? "text-emerald-300" : ""
                     }`}
-                    aria-label={t.congratsTemplate ? "Custom message set" : "Set custom message"}
+                    aria-label={
+                      t.congratsTemplates.length > 0
+                        ? `Custom messages set (${t.congratsTemplates.length})`
+                        : "Set custom messages"
+                    }
                     title={
-                      t.congratsTemplate
-                        ? "Custom congrats message set — click to edit"
-                        : "Add a custom congrats message for this tier"
+                      t.congratsTemplates.length > 0
+                        ? `${t.congratsTemplates.length} custom congrats message(s) — click to edit`
+                        : "Add custom congrats messages for this tier"
                     }
                   >
                     ✉
@@ -454,22 +484,26 @@ export function MilestoneForm({
               {expandedTier === i && (
                 <div className="mt-2 border-t border-white/5 pt-2">
                   <label className="mb-1 block text-xs text-white/60">
-                    Custom congrats message for <strong>{t.label || "this tier"}</strong>
+                    Custom congrats messages for <strong>{t.label || "this tier"}</strong>{" "}
+                    — one per line
                   </label>
                   <textarea
-                    value={t.congratsTemplate}
-                    onChange={(e) => setTier(i, { congratsTemplate: e.target.value })}
-                    rows={3}
-                    placeholder="Leave blank to fall back to the global template below."
+                    value={rosterToText(t.congratsTemplates)}
+                    onChange={(e) =>
+                      setTier(i, { congratsTemplates: e.target.value.split("\n") })
+                    }
+                    rows={5}
+                    placeholder="One message per line. Leave blank to fall back to the global roster below."
                     className={inputClass}
                   />
                   <p className="mt-1 text-xs text-white/40">
-                    Placeholders:
+                    The bot picks one at random each time someone claims this tier, avoiding
+                    whichever one was used last. Placeholders:
                     <code className="ml-1 text-white/60">{`{user}`}</code>
                     <code className="ml-1 text-white/60">{`{tier}`}</code>
                     <code className="ml-1 text-white/60">{`{emoji}`}</code>
                     <code className="ml-1 text-white/60">{`{claimChannel}`}</code>. Wins
-                    over the global template when set.
+                    over the global roster when any entries are set.
                   </p>
                 </div>
               )}
@@ -578,16 +612,17 @@ export function MilestoneForm({
 
       <div className="rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/5">
         <div className="mb-1 text-sm text-white/80">
-          Private message after claiming (only the clicker sees this)
+          Private messages after claiming (only the clicker sees this) — one per line
         </div>
         <p className="mb-3 text-xs text-white/40">
-          Shown ephemerally to the user who clicked. Always sent — there&apos;s no
-          toggle, since something needs to confirm the click worked.
+          Shown ephemerally to the user who clicked. The bot picks one at random each
+          claim, avoiding whichever was used last. Always sent — leave at least one entry.
         </p>
         <textarea
-          value={ephemeralTemplate}
-          onChange={(e) => setEphemeralTemplate(e.target.value)}
-          rows={3}
+          value={ephemeralTemplatesText}
+          onChange={(e) => setEphemeralTemplatesText(e.target.value)}
+          rows={6}
+          placeholder="One message per line."
           className={inputClass}
         />
         <p className="mt-1 text-xs text-white/40">
@@ -632,11 +667,14 @@ export function MilestoneForm({
             </div>
 
             <div>
-              <label className="mb-1 block text-sm text-white/80">Template</label>
+              <label className="mb-1 block text-sm text-white/80">
+                Templates — one per line (random pick per claim)
+              </label>
               <textarea
-                value={congratsTemplate}
-                onChange={(e) => setCongratsTemplate(e.target.value)}
-                rows={3}
+                value={congratsTemplatesText}
+                onChange={(e) => setCongratsTemplatesText(e.target.value)}
+                rows={6}
+                placeholder="One message per line. Used when a tier has no roster of its own."
                 className={inputClass}
               />
               <p className="mt-1 text-xs text-white/40">

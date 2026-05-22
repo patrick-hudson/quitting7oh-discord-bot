@@ -10,6 +10,22 @@ const CUSTOM_ID_PREFIX = "milestone:";
 const DEFAULT_EPHEMERAL =
   "{emoji} You've claimed **{tier}** — every day you showed up to earn this matters. We're proud of you. Keep going.";
 
+// Pick a random entry from a roster, avoiding the index used last time.
+// Returns null when the roster is empty so callers can fall back to a default.
+function pickFromRoster(
+  roster: string[],
+  lastIndex: number | null | undefined
+): { template: string; index: number } | null {
+  if (roster.length === 0) return null;
+  if (roster.length === 1) return { template: roster[0], index: 0 };
+  const candidates: number[] = [];
+  for (let i = 0; i < roster.length; i++) {
+    if (i !== lastIndex) candidates.push(i);
+  }
+  const idx = candidates[Math.floor(Math.random() * candidates.length)];
+  return { template: roster[idx], index: idx };
+}
+
 export function registerMilestoneHandler(client: Client) {
   client.on(Events.InteractionCreate, async (interaction: Interaction) => {
     if (!interaction.isButton()) return;
@@ -29,8 +45,18 @@ export function registerMilestoneHandler(client: Client) {
     try {
       const tier = await prisma.milestoneTier.findUnique({ where: { id: tierId } });
       if (!tier || tier.guildId !== interaction.guildId) {
+        // Diagnostic — we sometimes see this on rapid clicks even though
+        // re-clicking works. Logging context to figure out whether the tier
+        // is truly missing or this is a transient lookup miss.
+        const guildTierCount = interaction.guildId
+          ? await prisma.milestoneTier.count({ where: { guildId: interaction.guildId } })
+          : -1;
+        console.warn(
+          `[milestones] tier lookup miss: tierId=${tierId} userId=${interaction.user.id} guildId=${interaction.guildId} tierFound=${Boolean(tier)} guildTierCount=${guildTierCount}`
+        );
         await interaction.editReply({
-          content: "This milestone button is no longer valid. Ask an admin to republish the message.",
+          content:
+            "Hmm — couldn't claim that one. Try clicking again. If it keeps failing, an admin may need to republish the message.",
         });
         return;
       }
@@ -65,16 +91,36 @@ export function registerMilestoneHandler(client: Client) {
       const config = await prisma.milestoneConfig.findUnique({
         where: { guildId: tier.guildId },
       });
-      const template = config?.ephemeralTemplate || DEFAULT_EPHEMERAL;
-      const message = template
+
+      // Ephemeral roster — falls through to the baked-in default when empty.
+      const ephemeralPick = pickFromRoster(
+        config?.ephemeralTemplates ?? [],
+        config?.lastEphemeralIndex
+      );
+      const ephemeralTemplate = ephemeralPick?.template ?? DEFAULT_EPHEMERAL;
+      const message = ephemeralTemplate
         .replace(/\{tier\}/g, tier.label)
         .replace(/\{emoji\}/g, tier.emoji);
       await interaction.editReply({ content: message });
+      if (ephemeralPick && config) {
+        prisma.milestoneConfig
+          .update({
+            where: { guildId: config.guildId },
+            data: { lastEphemeralIndex: ephemeralPick.index },
+          })
+          .catch((err: unknown) =>
+            console.warn("[milestones] lastEphemeralIndex update failed:", err)
+          );
+      }
 
       // Optional congrats post in a public channel — fire-and-forget so a
       // misconfigured channel never breaks the role claim itself.
-      // Per-tier template wins over the config-level one.
-      const congratsText = tier.congratsTemplate || config?.congratsTemplate;
+      // Per-tier roster wins over the config-level one.
+      const tierPick = pickFromRoster(tier.congratsTemplates, tier.lastCongratsIndex);
+      const configPick = tierPick
+        ? null
+        : pickFromRoster(config?.congratsTemplates ?? [], config?.lastCongratsIndex);
+      const congratsText = tierPick?.template ?? configPick?.template ?? null;
       if (config?.congratsEnabled && config.congratsChannelId && congratsText) {
         try {
           const channel = await client.channels.fetch(config.congratsChannelId);
@@ -102,6 +148,28 @@ export function registerMilestoneHandler(client: Client) {
         } catch (err) {
           console.warn("[milestones] congrats send failed:", err);
         }
+      }
+
+      // Persist which roster entry we just used. Fire-and-forget — losing a
+      // last-index write would just mean one possible repeat next time.
+      if (tierPick) {
+        prisma.milestoneTier
+          .update({
+            where: { id: tier.id },
+            data: { lastCongratsIndex: tierPick.index },
+          })
+          .catch((err: unknown) =>
+            console.warn("[milestones] tier lastCongratsIndex update failed:", err)
+          );
+      } else if (configPick && config) {
+        prisma.milestoneConfig
+          .update({
+            where: { guildId: config.guildId },
+            data: { lastCongratsIndex: configPick.index },
+          })
+          .catch((err: unknown) =>
+            console.warn("[milestones] config lastCongratsIndex update failed:", err)
+          );
       }
     } catch (err) {
       console.error("[milestones] interaction failed:", err);

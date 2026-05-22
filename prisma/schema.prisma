@@ -39,13 +39,19 @@ model MilestoneConfig {
   description String   @default("Pick the tier that reflects where you are right now. Your role updates automatically and replaces any earlier milestone role.") @db.Text
 
   // Optional congrats post — sent to congratsChannelId when a user claims a tier.
-  congratsEnabled   Boolean @default(false)
-  congratsChannelId String?
-  congratsTemplate  String? @db.Text
+  congratsEnabled    Boolean  @default(false)
+  congratsChannelId  String?
+  // Roster of guild-level fallback templates. Used when a tier has no
+  // congratsTemplates of its own. Empty = no congrats unless the tier provides one.
+  congratsTemplates  String[] @default([])
+  // Index of the last template picked from congratsTemplates — used by the
+  // "random, avoid last used" picker.
+  lastCongratsIndex  Int?
 
-  // Private (ephemeral) message shown only to the user who clicked. Supports
-  // {tier} and {emoji} placeholders.
-  ephemeralTemplate String? @db.Text
+  // Roster of private (ephemeral) messages shown only to the user who clicked.
+  // Same placeholder rules as congratsTemplates. Empty = use the baked-in default.
+  ephemeralTemplates String[] @default([])
+  lastEphemeralIndex Int?
 
   updatedAt DateTime @updatedAt
 }
@@ -59,11 +65,13 @@ model MilestoneTier {
   label            String // human label shown on the button ("30 days")
   emoji            String // unicode emoji ("🌱")
   roleId           String // Discord role snowflake to grant
-  sortOrder        Int     @default(0)
-  // Optional per-tier congrats template. Falls through to MilestoneConfig.congratsTemplate
-  // when null/empty, then to a baked-in default. Same placeholders as the
-  // config-level template: {user} {tier} {emoji} {claimChannel}.
-  congratsTemplate String? @db.Text
+  sortOrder         Int      @default(0)
+  // Roster of per-tier congrats templates. Falls through to MilestoneConfig.congratsTemplates
+  // when empty, then to no congrats post. Same placeholders as the config-level
+  // template: {user} {tier} {emoji} {claimChannel}.
+  congratsTemplates String[] @default([])
+  // Index of the last template picked from congratsTemplates.
+  lastCongratsIndex Int?
 
   @@index([guildId, sortOrder])
 }

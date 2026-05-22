@@ -4,13 +4,18 @@ import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 
+// Each roster entry is capped at 2000 chars (Discord's message limit). The
+// array itself is capped at 20 entries — well beyond any realistic roster
+// while keeping payloads small.
+const templateRoster = z.array(z.string().min(1).max(2000)).max(20).default([]);
+
 const tierSchema = z.object({
   id: z.string().optional(), // present for existing rows, absent for new ones
   label: z.string().min(1).max(80),
   emoji: z.string().min(1).max(8),
   roleId: z.string().regex(/^\d{17,21}$/, "Invalid role ID").or(z.literal("")),
   sortOrder: z.number().int().min(0).max(99),
-  congratsTemplate: z.string().max(2000).optional().or(z.literal("")).or(z.null()),
+  congratsTemplates: templateRoster,
 });
 
 const configSchema = z.object({
@@ -30,8 +35,8 @@ const configSchema = z.object({
     .optional()
     .or(z.literal(""))
     .or(z.null()),
-  congratsTemplate: z.string().max(2000).optional().or(z.literal("")).or(z.null()),
-  ephemeralTemplate: z.string().max(2000).optional().or(z.literal("")).or(z.null()),
+  congratsTemplates: templateRoster,
+  ephemeralTemplates: templateRoster,
 });
 
 // GET — returns current config + tiers for this guild, seeding defaults if none.
@@ -69,14 +74,6 @@ export const PATCH = withErrors(async (
     input.congratsChannelId && input.congratsChannelId.length > 0
       ? input.congratsChannelId
       : null;
-  const normalizedCongratsTemplate =
-    input.congratsTemplate && input.congratsTemplate.length > 0
-      ? input.congratsTemplate
-      : null;
-  const normalizedEphemeralTemplate =
-    input.ephemeralTemplate && input.ephemeralTemplate.length > 0
-      ? input.ephemeralTemplate
-      : null;
 
   const [config] = await prisma.$transaction([
     prisma.milestoneConfig.upsert({
@@ -88,8 +85,8 @@ export const PATCH = withErrors(async (
         description: input.description,
         congratsEnabled: input.congratsEnabled,
         congratsChannelId: normalizedCongratsChannelId,
-        congratsTemplate: normalizedCongratsTemplate,
-        ephemeralTemplate: normalizedEphemeralTemplate,
+        congratsTemplates: input.congratsTemplates,
+        ephemeralTemplates: input.ephemeralTemplates,
       },
       update: {
         channelId: normalizedChannelId,
@@ -97,8 +94,8 @@ export const PATCH = withErrors(async (
         description: input.description,
         congratsEnabled: input.congratsEnabled,
         congratsChannelId: normalizedCongratsChannelId,
-        congratsTemplate: normalizedCongratsTemplate,
-        ephemeralTemplate: normalizedEphemeralTemplate,
+        congratsTemplates: input.congratsTemplates,
+        ephemeralTemplates: input.ephemeralTemplates,
       },
     }),
     // Replace-all is fine for a small set; keeps the row IDs predictable for
@@ -110,10 +107,8 @@ export const PATCH = withErrors(async (
         NOT: { id: { in: input.tiers.filter((t) => t.id).map((t) => t.id!) } },
       },
     }),
-    ...input.tiers.map((t) => {
-      const tierCongrats =
-        t.congratsTemplate && t.congratsTemplate.length > 0 ? t.congratsTemplate : null;
-      return t.id
+    ...input.tiers.map((t) =>
+      t.id
         ? prisma.milestoneTier.update({
             where: { id: t.id },
             data: {
@@ -121,7 +116,7 @@ export const PATCH = withErrors(async (
               emoji: t.emoji,
               roleId: t.roleId,
               sortOrder: t.sortOrder,
-              congratsTemplate: tierCongrats,
+              congratsTemplates: t.congratsTemplates,
             },
           })
         : prisma.milestoneTier.create({
@@ -131,10 +126,10 @@ export const PATCH = withErrors(async (
               emoji: t.emoji,
               roleId: t.roleId,
               sortOrder: t.sortOrder,
-              congratsTemplate: tierCongrats,
+              congratsTemplates: t.congratsTemplates,
             },
-          });
-    }),
+          })
+    ),
   ]);
 
   const tiers = await prisma.milestoneTier.findMany({
