@@ -26,6 +26,7 @@ export function Nav({
               <NavLink href={`/dashboard/${currentGuildId}`}>Posts</NavLink>
               <NavLink href={`/dashboard/${currentGuildId}/new`}>New Post</NavLink>
               <NavLink href={`/dashboard/${currentGuildId}/milestones`}>Milestones</NavLink>
+              <NavLink href={`/dashboard/${currentGuildId}/export`}>Export</NavLink>
               <NavLink href={`/dashboard/${currentGuildId}/settings`}>Settings</NavLink>
             </>
           )}

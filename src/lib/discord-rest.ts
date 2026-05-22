@@ -227,6 +227,101 @@ export async function deleteRole(guildId: string, roleId: string): Promise<void>
   }
 }
 
+// --- Message fetching (for channel export) ---
+
+export type DiscordMessageRaw = {
+  id: string;
+  channel_id: string;
+  type: number;
+  content: string;
+  timestamp: string;
+  edited_timestamp: string | null;
+  author: {
+    id: string;
+    username: string;
+    global_name: string | null;
+    bot?: boolean;
+    discriminator?: string;
+  };
+  mentions: Array<{ id: string; username: string; global_name: string | null }>;
+  mention_roles: string[];
+  attachments: Array<{
+    id: string;
+    filename: string;
+    content_type?: string;
+    size: number;
+    url: string;
+    width?: number;
+    height?: number;
+  }>;
+  embeds: Array<{
+    title?: string;
+    type?: string;
+    description?: string;
+    url?: string;
+    color?: number;
+    author?: { name?: string; url?: string };
+    fields?: Array<{ name: string; value: string; inline?: boolean }>;
+    image?: { url: string };
+    thumbnail?: { url: string };
+    footer?: { text?: string };
+  }>;
+  reactions?: Array<{
+    count: number;
+    emoji: { id: string | null; name: string };
+  }>;
+  referenced_message?: { id: string; author?: { username: string } } | null;
+};
+
+// Page through a channel's history oldest-first. Returns all messages up to
+// `limit` total. Discord's API returns newest first by default; we walk
+// backwards with the `before` parameter then reverse at the end.
+export async function listMessages(
+  channelId: string,
+  options: { limit?: number } = {}
+): Promise<DiscordMessageRaw[]> {
+  const maxTotal = options.limit ?? 10000;
+  const collected: DiscordMessageRaw[] = [];
+  let before: string | undefined;
+
+  while (collected.length < maxTotal) {
+    const params = new URLSearchParams({ limit: "100" });
+    if (before) params.set("before", before);
+    const res = await discordFetch(
+      `${BASE}/channels/${channelId}/messages?${params.toString()}`,
+      { headers: headers() }
+    );
+    if (!res.ok) {
+      throw new Error(`discord listMessages ${res.status}: ${await res.text()}`);
+    }
+    const batch = (await res.json()) as DiscordMessageRaw[];
+    if (batch.length === 0) break;
+    collected.push(...batch);
+    before = batch[batch.length - 1].id;
+    if (batch.length < 100) break; // last page
+  }
+
+  // API returns newest-first; reverse so the export reads chronologically.
+  return collected.reverse();
+}
+
+// Pinned messages for a channel. Discord caps this at 50 per channel and
+// returns them newest-pin first; we reverse so the export reads chronologically
+// like listMessages does.
+export async function listPinnedMessages(
+  channelId: string
+): Promise<DiscordMessageRaw[]> {
+  const res = await discordFetch(
+    `${BASE}/channels/${channelId}/pins`,
+    { headers: headers() }
+  );
+  if (!res.ok) {
+    throw new Error(`discord listPins ${res.status}: ${await res.text()}`);
+  }
+  const messages = (await res.json()) as DiscordMessageRaw[];
+  return messages.reverse();
+}
+
 // Bulk-updates role positions. Discord rebalances surrounding roles to make
 // room. Roles are assigned the positions in the order given.
 export async function setRolePositions(

@@ -17,12 +17,20 @@ export function registerMilestoneHandler(client: Client) {
     if (!interaction.inGuild()) return;
 
     const tierId = interaction.customId.slice(CUSTOM_ID_PREFIX.length);
+    // ACK within Discord's 3s interaction window. Role swaps + DB lookups
+    // below can take longer than that, so we defer up front and editReply
+    // when the work is done.
+    try {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    } catch (err) {
+      console.warn("[milestones] deferReply failed (interaction likely expired):", err);
+      return;
+    }
     try {
       const tier = await prisma.milestoneTier.findUnique({ where: { id: tierId } });
       if (!tier || tier.guildId !== interaction.guildId) {
-        await interaction.reply({
+        await interaction.editReply({
           content: "This milestone button is no longer valid. Ask an admin to republish the message.",
-          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -43,9 +51,8 @@ export function registerMilestoneHandler(client: Client) {
 
       // Already on this tier — let them know and bail.
       if (member.roles.cache.has(tier.roleId) && heldOtherRoles.length === 0) {
-        await interaction.reply({
+        await interaction.editReply({
           content: `You already have the **${tier.label}** role.`,
-          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -62,7 +69,7 @@ export function registerMilestoneHandler(client: Client) {
       const message = template
         .replace(/\{tier\}/g, tier.label)
         .replace(/\{emoji\}/g, tier.emoji);
-      await interaction.reply({ content: message, flags: MessageFlags.Ephemeral });
+      await interaction.editReply({ content: message });
 
       // Optional congrats post in a public channel — fire-and-forget so a
       // misconfigured channel never breaks the role claim itself.
@@ -98,18 +105,17 @@ export function registerMilestoneHandler(client: Client) {
       }
     } catch (err) {
       console.error("[milestones] interaction failed:", err);
-      // Best-effort ack so the button doesn't show as "interaction failed".
+      // Best-effort surfacing — we already deferred, so editReply is the
+      // primary path; fall back to followUp if something edited it already.
       try {
         const msg =
           err instanceof Error && err.message.includes("Missing Permissions")
             ? "I don't have permission to manage this role. Ask an admin to move my role above the milestone roles."
             : "Something went wrong claiming that milestone. Try again in a sec.";
-        if (interaction.isRepliable()) {
-          if (interaction.replied || interaction.deferred) {
-            await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral });
-          } else {
-            await interaction.reply({ content: msg, flags: MessageFlags.Ephemeral });
-          }
+        if (interaction.deferred) {
+          await interaction.editReply({ content: msg });
+        } else if (interaction.replied) {
+          await interaction.followUp({ content: msg, flags: MessageFlags.Ephemeral });
         }
       } catch {
         // swallow — the original error is already logged
