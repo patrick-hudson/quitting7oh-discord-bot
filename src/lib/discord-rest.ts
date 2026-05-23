@@ -305,6 +305,39 @@ export async function listMessages(
   return collected.reverse();
 }
 
+// Lists members in a guild, paginated. Each page is up to 1000 members; we
+// stop once a short page comes back. Used by the dashboard to count how many
+// people hold each milestone role.
+//
+// Requires the bot's `GUILD_MEMBERS` privileged intent to be enabled in the
+// developer portal — Discord rejects this REST call otherwise. We cap at 5
+// pages (5000 members) defensively so a very large guild doesn't stall the
+// dashboard render; counts in that case are a lower bound.
+export type DiscordMemberLite = {
+  user: { id: string };
+  roles: string[];
+};
+export async function listGuildMembers(guildId: string): Promise<DiscordMemberLite[]> {
+  const all: DiscordMemberLite[] = [];
+  let after: string | undefined;
+  for (let page = 0; page < 5; page++) {
+    const params = new URLSearchParams({ limit: "1000" });
+    if (after) params.set("after", after);
+    const res = await discordFetch(
+      `${BASE}/guilds/${guildId}/members?${params.toString()}`,
+      { headers: headers() }
+    );
+    if (!res.ok) {
+      throw new Error(`discord listMembers ${res.status}: ${await res.text()}`);
+    }
+    const batch = (await res.json()) as DiscordMemberLite[];
+    all.push(...batch);
+    if (batch.length < 1000) break;
+    after = batch[batch.length - 1].user.id;
+  }
+  return all;
+}
+
 // Pinned messages for a channel. Discord caps this at 50 per channel and
 // returns them newest-pin first; we reverse so the export reads chronologically
 // like listMessages does.

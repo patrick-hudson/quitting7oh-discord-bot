@@ -107,9 +107,13 @@ model ScheduledPost {
   leadMinutes Int @default(0)
 
   // State
-  active      Boolean   @default(true)
-  lastFiredAt DateTime?
-  nextFireAt  DateTime? // null = no future run scheduled (e.g. fired one-off)
+  active       Boolean   @default(true)
+  lastFiredAt  DateTime?
+  nextFireAt   DateTime? // null = no future run scheduled (e.g. fired one-off)
+  // Most recent send failure — set by the scheduler's catch path. lastError is
+  // the truncated error message; null when the post has never failed.
+  lastFailedAt DateTime?
+  lastError    String?   @db.Text
 
   // Audit
   createdAt DateTime @default(now())
@@ -129,6 +133,8 @@ model User {
   email         String?   @unique
   emailVerified DateTime?
   image         String?
+  // Stamped by an Auth.js `events.signIn` callback on each successful sign-in.
+  lastSignInAt  DateTime?
   accounts      Account[]
   sessions      Session[]
 }

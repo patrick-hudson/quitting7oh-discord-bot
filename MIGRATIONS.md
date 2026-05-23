@@ -119,10 +119,22 @@ errors for code paths that touch the changed columns. Two options:
   This reimports the whole DB, so only do it if nothing important has been
   written since the snapshot.
 
-## Index of migrations
+## Index of manual migrations
 
 | Date       | File                                        | Summary |
 | ---------- | ------------------------------------------- | ------- |
 | 2026-05-22 | `2026-05-22-milestone-rosters.sql`          | Schema change: convert `MilestoneTier.congratsTemplate` and `MilestoneConfig.{congrats,ephemeral}Template` from single text columns to `text[]` rosters with `lastIndex` counters. |
 | 2026-05-22 | `2026-05-22-milestone-default-rosters.sql`  | Data-only backfill: expand the per-tier congrats roster from 1 entry to ~7 variants. Skips any tier that already has 2+ entries (i.e. customized). Optional — only run if you want the new defaults on existing guilds. |
 | 2026-05-22 | `2026-05-22-milestone-global-congrats-roster.sql` | Data-only backfill: expand the guild-level fallback congrats roster from 1 entry to 15 variants. Skips guilds whose roster already has 2+ entries. Mostly dormant if per-tier rosters are populated, but worth running so the fallback is current. |
+
+## Additive schema changes (auto-applied by `prisma db push`)
+
+Schema changes that only *add* optional columns (or new tables) don't need a
+manual SQL file — the `migrate` service's `prisma db push --skip-generate`
+applies them losslessly on the next deploy. Log them here for visibility so it's
+obvious what each deploy changed.
+
+| Date       | Change                                                                                                                            |
+| ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-05-22 | `ScheduledPost.lastFailedAt: DateTime?` and `ScheduledPost.lastError: String?` — scheduler stamps these on send failure so the dashboard can surface the most recent error. |
+| 2026-05-22 | `User.lastSignInAt: DateTime?` — stamped by Auth.js `events.signIn` on each sign-in. Powers the dashboard "Recently signed in" panel. |

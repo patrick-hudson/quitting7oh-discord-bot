@@ -33,6 +33,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       };
     },
   },
+  events: {
+    // Stamp the User row each time someone successfully signs in. Used by the
+    // dashboard "Recently signed in" panel — purely informational, no auth
+    // logic depends on it.
+    async signIn({ user }) {
+      if (!user.id) return;
+      await prisma.user
+        .update({ where: { id: user.id }, data: { lastSignInAt: new Date() } })
+        .catch((err) => console.warn("[auth] lastSignInAt update failed:", err));
+    },
+  },
   pages: { signIn: "/login" },
 });
 

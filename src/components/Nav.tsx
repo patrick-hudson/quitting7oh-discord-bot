@@ -23,7 +23,8 @@ export function Nav({
         <nav className="flex items-center gap-1 text-sm text-white/70">
           {currentGuildId && (
             <>
-              <NavLink href={`/dashboard/${currentGuildId}`}>Posts</NavLink>
+              <NavLink href={`/dashboard/${currentGuildId}`}>Dashboard</NavLink>
+              <NavLink href={`/dashboard/${currentGuildId}/posts`}>Posts</NavLink>
               <NavLink href={`/dashboard/${currentGuildId}/new`}>New Post</NavLink>
               <NavLink href={`/dashboard/${currentGuildId}/milestones`}>Milestones</NavLink>
               <NavLink href={`/dashboard/${currentGuildId}/export`}>Export</NavLink>

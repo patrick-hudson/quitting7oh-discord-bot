@@ -50,12 +50,18 @@ async function tick(client: Client) {
     } catch (err) {
       console.error(`[scheduler] failed to send post ${post.id}:`, err);
       // Push nextFireAt forward by 60s so we don't hammer a permanently broken
-      // post every poll. Surface failures via logs; could add a failure
-      // counter later.
+      // post every poll. Also record the failure so the dashboard can surface
+      // it instead of relying on log spelunking.
       const retryAt = new Date(Date.now() + 60_000);
+      const message = err instanceof Error ? err.message : String(err);
       await prisma.scheduledPost.update({
         where: { id: post.id },
-        data: { nextFireAt: retryAt },
+        data: {
+          nextFireAt: retryAt,
+          lastFailedAt: new Date(),
+          // Truncate so a 50KB stack trace doesn't bloat the row.
+          lastError: message.slice(0, 1000),
+        },
       });
     }
   }
