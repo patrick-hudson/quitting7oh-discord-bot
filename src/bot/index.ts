@@ -6,7 +6,7 @@
 //      message, then compute the next nextFireAt (or deactivate if one-off).
 //   3. Lazy-upsert Guild rows when the bot joins a new guild.
 
-import { Client, Events, GatewayIntentBits } from "discord.js";
+import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
 import { prisma } from "@/lib/db";
 import { iconUrl } from "@/lib/discord-rest";
 import { runScheduler } from "./scheduler";
@@ -17,10 +17,43 @@ async function main() {
   if (!token) throw new Error("DISCORD_BOT_TOKEN not set");
 
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers],
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMembers,
+      // GuildMessages is NOT a privileged intent — we only need it to count
+      // and timestamp messages for the activity graph. MESSAGE_CONTENT stays
+      // off, so we never see message text.
+      GatewayIntentBits.GuildMessages,
+    ],
   });
 
   registerMilestoneHandler(client);
+
+  // Activity logging — one row per observed message. Fire-and-forget so a
+  // slow DB never delays the event loop. We deliberately skip threads and
+  // DMs (no guildId) since the dashboard is per-guild.
+  client.on(Events.MessageCreate, (msg: Message) => {
+    if (!msg.guildId) return;
+    prisma.messageEvent
+      .create({
+        data: {
+          id: msg.id,
+          guildId: msg.guildId,
+          channelId: msg.channelId,
+          authorId: msg.author.id,
+          isBot: msg.author.bot,
+          sentAt: msg.createdAt,
+        },
+      })
+      .catch((err: unknown) => {
+        // P2002 (unique constraint) just means we already logged this id —
+        // can happen on reconnect/redelivery. Anything else is worth knowing.
+        const code = (err as { code?: string } | null)?.code;
+        if (code !== "P2002") {
+          console.warn("[bot] message log failed:", err);
+        }
+      });
+  });
 
   client.once(Events.ClientReady, async (c) => {
     console.log(`[bot] logged in as ${c.user.tag} (${c.user.id})`);

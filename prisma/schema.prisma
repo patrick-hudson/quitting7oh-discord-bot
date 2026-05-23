@@ -76,6 +76,23 @@ model MilestoneTier {
   @@index([guildId, sortOrder])
 }
 
+// One row per message the bot observes via MessageCreate. Populated by the
+// bot worker so the dashboard can render activity graphs. Indexed on
+// (guildId, sentAt) since every query slices by guild + time window.
+//
+// Storage is unbounded for now; add a periodic prune job (or rollup table)
+// if it grows uncomfortably.
+model MessageEvent {
+  id        String   @id // Discord message snowflake
+  guildId   String
+  channelId String
+  authorId  String
+  isBot     Boolean  @default(false)
+  sentAt    DateTime
+
+  @@index([guildId, sentAt])
+}
+
 // A scheduled message. Either `cron` (recurring) or `runAt` (one-off) is set,
 // never both. `active=false` pauses without deleting. `nextFireAt` is
 // pre-computed on every write so the scheduler can use an indexed lookup.

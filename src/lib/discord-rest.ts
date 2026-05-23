@@ -314,8 +314,16 @@ export async function listMessages(
 // pages (5000 members) defensively so a very large guild doesn't stall the
 // dashboard render; counts in that case are a lower bound.
 export type DiscordMemberLite = {
-  user: { id: string };
+  user: {
+    id: string;
+    username: string;
+    global_name: string | null;
+    avatar: string | null;
+  };
   roles: string[];
+  // ISO timestamp of when this user joined the guild. Null for the few system
+  // members Discord returns without a join date (rare).
+  joined_at: string | null;
 };
 export async function listGuildMembers(guildId: string): Promise<DiscordMemberLite[]> {
   const all: DiscordMemberLite[] = [];

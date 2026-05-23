@@ -138,3 +138,4 @@ obvious what each deploy changed.
 | ---------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | 2026-05-22 | `ScheduledPost.lastFailedAt: DateTime?` and `ScheduledPost.lastError: String?` — scheduler stamps these on send failure so the dashboard can surface the most recent error. |
 | 2026-05-22 | `User.lastSignInAt: DateTime?` — stamped by Auth.js `events.signIn` on each sign-in. Powers the dashboard "Recently signed in" panel. |
+| 2026-05-22 | New table `MessageEvent` — one row per observed Discord message (id, guildId, channelId, authorId, isBot, sentAt). Powers the dashboard activity graph. Bot also needs the `GuildMessages` intent (non-privileged, in code only — no portal toggle). |

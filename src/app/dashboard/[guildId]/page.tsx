@@ -6,12 +6,47 @@ import { listGuildMembers, listTextChannels } from "@/lib/discord-rest";
 // see at a glance whether the bot is doing what it should without clicking
 // through every section. Everything below is read-only — actions live on the
 // dedicated pages.
+type ActivityRange = "24h" | "7d" | "30d";
+
+const RANGE_CONFIG: Record<
+  ActivityRange,
+  { label: string; durationMs: number; bucketMs: number; unit: "hour" | "day"; bucketLabel: (d: Date) => string }
+> = {
+  "24h": {
+    label: "Last 24 hours",
+    durationMs: 24 * 60 * 60 * 1000,
+    bucketMs: 60 * 60 * 1000,
+    unit: "hour",
+    bucketLabel: (d) => d.toLocaleTimeString([], { hour: "numeric" }),
+  },
+  "7d": {
+    label: "Last 7 days",
+    durationMs: 7 * 24 * 60 * 60 * 1000,
+    bucketMs: 60 * 60 * 1000,
+    unit: "hour",
+    bucketLabel: (d) => d.toLocaleDateString([], { weekday: "short" }),
+  },
+  "30d": {
+    label: "Last 30 days",
+    durationMs: 30 * 24 * 60 * 60 * 1000,
+    bucketMs: 24 * 60 * 60 * 1000,
+    unit: "day",
+    bucketLabel: (d) => d.toLocaleDateString([], { month: "numeric", day: "numeric" }),
+  },
+};
+
 export default async function DashboardPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ guildId: string }>;
+  searchParams: Promise<{ range?: string }>;
 }) {
   const { guildId } = await params;
+  const rangeParam = (await searchParams).range;
+  const range: ActivityRange =
+    rangeParam === "7d" || rangeParam === "30d" ? rangeParam : "24h";
+  const rangeCfg = RANGE_CONFIG[range];
 
   // Fan-out queries in parallel — the page can't render until all return.
   const [
@@ -25,9 +60,11 @@ export default async function DashboardPage({
     tiers,
     milestoneConfig,
     lastFailedPost,
-    recentSignIns,
     channels,
     members,
+    activityBuckets,
+    msgs24hCount,
+    msgs24hHumanAuthors,
   ] = await Promise.all([
     prisma.guild.findUnique({ where: { id: guildId } }),
     prisma.scheduledPost.count({ where: { guildId, active: true } }),
@@ -59,17 +96,49 @@ export default async function DashboardPage({
       where: { guildId, lastFailedAt: { not: null } },
       orderBy: { lastFailedAt: "desc" },
     }),
-    // Sign-ins are global, not per-guild — anyone who can see this dashboard
-    // can see who else has logged in lately. Limit to 5 most recent.
-    prisma.user.findMany({
-      where: { lastSignInAt: { not: null } },
-      orderBy: { lastSignInAt: "desc" },
-      take: 5,
-      select: { id: true, name: true, image: true, lastSignInAt: true },
-    }),
     listTextChannels(guildId).catch(() => null),
     listGuildMembers(guildId).catch(() => null),
+    // Raw bucketed counts. We pass the truncation unit via Prisma.sql so the
+    // identifier isn't string-concatenated. date_trunc returns a timestamptz;
+    // ::int casts count from bigint so the JS side gets numbers, not BigInt.
+    prisma.$queryRaw<Array<{ bucket: Date; count: number }>>`
+      SELECT date_trunc(${rangeCfg.unit}::text, "sentAt") AS bucket, count(*)::int AS count
+      FROM "MessageEvent"
+      WHERE "guildId" = ${guildId}
+        AND "sentAt" >= ${new Date(Date.now() - rangeCfg.durationMs)}
+      GROUP BY 1
+      ORDER BY 1
+    `,
+    prisma.messageEvent.count({
+      where: {
+        guildId,
+        sentAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+      },
+    }),
+    // Distinct human authors in last 24h. Surfaced as "from N members" subtext.
+    prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT count(DISTINCT "authorId")::int AS count
+      FROM "MessageEvent"
+      WHERE "guildId" = ${guildId}
+        AND "isBot" = false
+        AND "sentAt" >= ${new Date(Date.now() - 24 * 60 * 60 * 1000)}
+    `,
   ]);
+
+  // Project the sparse DB buckets into a dense array (zero-fill missing
+  // buckets) so the chart renders even on quiet periods.
+  const bucketCount = Math.round(rangeCfg.durationMs / rangeCfg.bucketMs);
+  const nowFloor = Math.floor(Date.now() / rangeCfg.bucketMs) * rangeCfg.bucketMs;
+  const denseBuckets: Array<{ at: Date; count: number }> = [];
+  for (let i = bucketCount - 1; i >= 0; i--) {
+    denseBuckets.push({ at: new Date(nowFloor - i * rangeCfg.bucketMs), count: 0 });
+  }
+  const bucketByMs = new Map(denseBuckets.map((b, i) => [b.at.getTime(), i]));
+  for (const row of activityBuckets) {
+    const idx = bucketByMs.get(row.bucket.getTime());
+    if (idx !== undefined) denseBuckets[idx].count = row.count;
+  }
+  const humanAuthors24h = msgs24hHumanAuthors[0]?.count ?? 0;
 
   if (!guild) return null;
 
@@ -91,6 +160,16 @@ export default async function DashboardPage({
         }
         return counts;
       })()
+    : null;
+
+  // Five most-recent joiners, sorted by joined_at desc. Members with a null
+  // joined_at (rare — system accounts) are filtered out so the timestamp render
+  // doesn't crash.
+  const recentJoins = members
+    ? [...members]
+        .filter((m) => m.joined_at !== null)
+        .sort((a, b) => (a.joined_at! < b.joined_at! ? 1 : -1))
+        .slice(0, 5)
     : null;
 
   return (
@@ -174,7 +253,54 @@ export default async function DashboardPage({
           }
           tone={channelsReachable ? "default" : "warn"}
         />
+        <StatCard
+          label="Members"
+          value={members ? members.length.toLocaleString() : "—"}
+          sub={
+            members
+              ? recentJoins && recentJoins.length > 0
+                ? `last joined ${relativeTime(new Date(recentJoins[0].joined_at!))}`
+                : "no recent joins"
+              : "GUILD_MEMBERS intent disabled?"
+          }
+          tone={members ? "default" : "warn"}
+        />
+        <StatCard
+          label="Messages, last 24h"
+          value={msgs24hCount.toLocaleString()}
+          sub={
+            msgs24hCount === 0
+              ? "no activity logged"
+              : `from ${humanAuthors24h} member${humanAuthors24h === 1 ? "" : "s"}`
+          }
+        />
       </div>
+
+      {/* Activity chart */}
+      <Panel
+        title="Activity"
+        right={
+          <div className="flex gap-1 text-xs">
+            {(["24h", "7d", "30d"] as ActivityRange[]).map((r) => (
+              <Link
+                key={r}
+                href={`/dashboard/${guildId}?range=${r}`}
+                className={`rounded px-2 py-1 ${
+                  range === r
+                    ? "bg-white/10 text-white"
+                    : "text-white/50 hover:text-white"
+                }`}
+              >
+                {r}
+              </Link>
+            ))}
+          </div>
+        }
+      >
+        <div className="px-4 py-3">
+          <ActivityChart buckets={denseBuckets} bucketLabel={rangeCfg.bucketLabel} />
+        </div>
+      </Panel>
 
       {/* Two-column: upcoming + recent */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -294,35 +420,45 @@ export default async function DashboardPage({
         )}
       </Panel>
 
-      {/* Recently signed in */}
-      <Panel title="Recently signed in">
-        {recentSignIns.length === 0 ? (
-          <EmptyMsg>No sign-ins recorded yet.</EmptyMsg>
+      {/* Recently joined */}
+      <Panel title="Recently joined">
+        {recentJoins === null ? (
+          <EmptyMsg>
+            Member list unavailable — enable the <code>GUILD_MEMBERS</code> intent
+            in the Discord developer portal so the bot can fetch members.
+          </EmptyMsg>
+        ) : recentJoins.length === 0 ? (
+          <EmptyMsg>No members with a join date yet.</EmptyMsg>
         ) : (
           <ul className="divide-y divide-white/5">
-            {recentSignIns.map((u) => (
-              <li key={u.id} className="flex items-center gap-3 px-4 py-2">
-                {u.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={u.image}
-                    alt=""
-                    className="h-6 w-6 rounded-full ring-1 ring-white/10"
-                  />
-                ) : (
-                  <div className="h-6 w-6 rounded-full bg-white/10" />
-                )}
-                <span className="min-w-0 flex-1 truncate text-sm">
-                  {u.name ?? "Unknown user"}
-                </span>
-                <span
-                  className="shrink-0 text-xs text-white/50"
-                  title={u.lastSignInAt!.toLocaleString()}
-                >
-                  {relativeTime(u.lastSignInAt!)}
-                </span>
-              </li>
-            ))}
+            {recentJoins.map((m) => {
+              const displayName = m.user.global_name || m.user.username;
+              const avatarUrl = m.user.avatar
+                ? `https://cdn.discordapp.com/avatars/${m.user.id}/${m.user.avatar}.png?size=64`
+                : null;
+              const joinedAt = new Date(m.joined_at!);
+              return (
+                <li key={m.user.id} className="flex items-center gap-3 px-4 py-2">
+                  {avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={avatarUrl}
+                      alt=""
+                      className="h-6 w-6 rounded-full ring-1 ring-white/10"
+                    />
+                  ) : (
+                    <div className="h-6 w-6 rounded-full bg-white/10" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate text-sm">{displayName}</span>
+                  <span
+                    className="shrink-0 text-xs text-white/50"
+                    title={joinedAt.toLocaleString()}
+                  >
+                    {relativeTime(joinedAt)}
+                  </span>
+                </li>
+              );
+            })}
           </ul>
         )}
       </Panel>
@@ -404,24 +540,97 @@ function Panel({
   children,
   linkHref,
   linkLabel,
+  right,
 }: {
   title: string;
   children: React.ReactNode;
   linkHref?: string;
   linkLabel?: string;
+  right?: React.ReactNode;
 }) {
   return (
     <section className="overflow-hidden rounded-2xl bg-white/[0.02] ring-1 ring-white/5">
       <header className="flex items-center justify-between border-b border-white/5 px-4 py-2.5">
         <h2 className="text-sm font-medium text-white/80">{title}</h2>
-        {linkHref && (
-          <Link href={linkHref} className="text-xs text-white/50 hover:text-white">
-            {linkLabel ?? "View"}
-          </Link>
-        )}
+        {right ??
+          (linkHref && (
+            <Link href={linkHref} className="text-xs text-white/50 hover:text-white">
+              {linkLabel ?? "View"}
+            </Link>
+          ))}
       </header>
       {children}
     </section>
+  );
+}
+
+// Inline SVG bar chart for the activity panel. We stretch the bars with
+// `preserveAspectRatio="none"` so the chart fills its container at any width;
+// labels are rendered as a separate flex row below where text scaling stays
+// sane.
+function ActivityChart({
+  buckets,
+  bucketLabel,
+}: {
+  buckets: Array<{ at: Date; count: number }>;
+  bucketLabel: (d: Date) => string;
+}) {
+  const max = Math.max(1, ...buckets.map((b) => b.count));
+  const total = buckets.reduce((sum, b) => sum + b.count, 0);
+  const n = buckets.length;
+  const barW = 100 / n;
+
+  // Pick ~6 evenly-spaced labels so the axis never gets crowded.
+  const labelEvery = Math.max(1, Math.ceil(n / 6));
+
+  if (total === 0) {
+    return (
+      <div className="flex h-32 items-center justify-center rounded-lg bg-white/[0.02] text-sm text-white/40">
+        No activity in this window yet.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <svg
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className="h-32 w-full rounded-lg bg-white/[0.02]"
+        role="img"
+        aria-label={`Activity, ${n} buckets`}
+      >
+        {buckets.map((b, i) => {
+          const h = (b.count / max) * 95;
+          return (
+            <rect
+              key={i}
+              x={i * barW + 0.15}
+              y={100 - h}
+              width={barW - 0.3}
+              height={h || 0.4}
+              fill="var(--color-brand-500, #5865F2)"
+              opacity={b.count === 0 ? 0.15 : 0.85}
+            >
+              <title>
+                {b.at.toLocaleString()} — {b.count} message{b.count === 1 ? "" : "s"}
+              </title>
+            </rect>
+          );
+        })}
+      </svg>
+      <div className="mt-1 flex text-[10px] text-white/40">
+        {buckets.map((b, i) => (
+          <div key={i} className="flex-1 text-center">
+            {i % labelEvery === 0 ? bucketLabel(b.at) : ""}
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 text-xs text-white/50">
+        {total.toLocaleString()} message{total === 1 ? "" : "s"} · peak{" "}
+        {max.toLocaleString()} / bucket
+      </div>
+    </div>
   );
 }
 
