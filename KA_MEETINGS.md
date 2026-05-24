@@ -178,3 +178,10 @@ WHERE "guildId" = '<your-guild-id>' AND name LIKE '%KA — %';
   in an image URL — use the color chart above to match the embed strip.
 - If you want to ping a role, set it on each post in the dashboard
   (the seeder leaves `mentionRoleId = null`).
+
+### Changing the warning lead time later
+
+If you want to shift how many minutes before each meeting the bot fires
+its warning post — not just KA meetings, but any cron-scheduled post in
+a guild — see [LEAD_TIME.md](LEAD_TIME.md). That doc covers the
+preview/apply scripts and the prod Docker invocation.
