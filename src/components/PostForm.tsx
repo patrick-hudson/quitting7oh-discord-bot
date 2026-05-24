@@ -68,7 +68,25 @@ export function PostForm({
   const [roles, setRoles] = useState<Role[]>([]);
   const [preview, setPreview] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<"stay" | "return" | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+  const [toast, setToast] = useState<{
+    message: string;
+    id: number;
+    visible: boolean;
+  } | null>(null);
+
+  function showToast(message: string) {
+    const id = Date.now();
+    setToast({ message, id, visible: true });
+    // Fade out, then unmount.
+    setTimeout(() => {
+      setToast((c) => (c?.id === id ? { ...c, visible: false } : c));
+    }, 1800);
+    setTimeout(() => {
+      setToast((c) => (c?.id === id ? null : c));
+    }, 2200);
+  }
 
   useEffect(() => {
     fetch(`/api/guilds/${guildId}/channels`)
@@ -100,16 +118,16 @@ export function PostForm({
 
   function set<K extends keyof PostFormValues>(k: K, v: PostFormValues[K]) {
     setValues((s) => ({ ...s, [k]: v }));
+    setIsDirty(true);
   }
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function save(mode: "stay" | "return") {
     setError(null);
     if (values.channelIds.length === 0) {
       setError("Pick at least one channel.");
       return;
     }
-    setSaving(true);
+    setSaving(mode);
     const method = initial?.id ? "PATCH" : "POST";
     const url = initial?.id
       ? `/api/guilds/${guildId}/posts/${initial.id}`
@@ -130,14 +148,47 @@ export function PostForm({
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
-    setSaving(false);
     if (!res.ok) {
+      setSaving(null);
       const data = await res.json().catch(() => ({}));
       setError(data.error ?? `Failed (${res.status})`);
       return;
     }
-    router.push(`/dashboard/${guildId}`);
+
+    showToast("Saved");
+
+    if (mode === "return") {
+      // Brief delay so the toast is visible before we navigate away.
+      setTimeout(() => {
+        router.push(`/dashboard/${guildId}/posts`);
+        router.refresh();
+      }, 600);
+      return;
+    }
+
+    // Save and stay: for a new post, route to its edit page so further
+    // saves update instead of creating duplicates. For an existing post,
+    // just refresh in place.
+    if (!initial?.id) {
+      const data = await res.json().catch(() => ({}));
+      const newId = data?.post?.id;
+      if (newId) {
+        setTimeout(() => {
+          router.push(`/dashboard/${guildId}/posts/${newId}`);
+          router.refresh();
+        }, 600);
+        return;
+      }
+    }
+    setSaving(null);
+    setIsDirty(false);
     router.refresh();
+  }
+
+  function onSubmit(e: React.FormEvent) {
+    // Default submit (Enter key) acts as "save and return".
+    e.preventDefault();
+    void save("return");
   }
 
   return (
@@ -383,19 +434,43 @@ export function PostForm({
       <div className="flex justify-end gap-3">
         <button
           type="button"
-          onClick={() => router.push(`/dashboard/${guildId}`)}
+          onClick={() => router.push(`/dashboard/${guildId}/posts`)}
           className="rounded-lg px-4 py-2 text-sm text-white/70 hover:bg-white/5"
         >
           Cancel
         </button>
         <button
-          type="submit"
-          disabled={saving}
-          className="rounded-lg bg-[color:var(--color-brand-600)] px-4 py-2 text-sm font-medium hover:bg-[color:var(--color-brand-500)] disabled:opacity-50"
+          type="button"
+          onClick={() => void save("stay")}
+          disabled={saving !== null || !isDirty}
+          className="rounded-lg bg-white/10 px-4 py-2 text-sm font-medium text-white hover:bg-white/15 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-white/40 disabled:hover:bg-white/5"
         >
-          {saving ? "Saving…" : initial?.id ? "Save changes" : "Create post"}
+          {saving === "stay" ? "Saving…" : "Save"}
+        </button>
+        <button
+          type="submit"
+          disabled={saving !== null || !isDirty}
+          className="rounded-lg bg-[color:var(--color-brand-600)] px-4 py-2 text-sm font-medium hover:bg-[color:var(--color-brand-500)] disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-white/40 disabled:hover:bg-white/5"
+        >
+          {saving === "return"
+            ? "Saving…"
+            : initial?.id
+              ? "Save and return"
+              : "Create and return"}
         </button>
       </div>
+
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`pointer-events-none fixed bottom-6 right-6 z-50 rounded-lg bg-emerald-500/15 px-4 py-2 text-sm text-emerald-200 shadow-lg ring-1 ring-emerald-500/30 backdrop-blur transition-opacity duration-300 ${
+            toast.visible ? "opacity-100" : "opacity-0"
+          }`}
+        >
+          {toast.message}
+        </div>
+      )}
     </form>
   );
 }
