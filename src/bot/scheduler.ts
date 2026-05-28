@@ -2,6 +2,8 @@
 //   - SELECT ScheduledPost WHERE active = true AND nextFireAt <= now()
 //   - For each row: post the message, then either compute a new nextFireAt
 //     (recurring) or set active=false + nextFireAt=null (one-off).
+//   - SELECT PostReminder WHERE sentAt IS NULL AND remindAt <= now()
+//   - For each row: reply to the original message(s) with a plain-text nudge.
 //
 // This polling model is intentionally simple: portal edits take effect on the
 // next tick with no IPC, the bot is stateless beyond Discord login, and
@@ -13,7 +15,24 @@ import { Client, EmbedBuilder } from "discord.js";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 import { computeNextFireAt } from "@/lib/cron";
-import type { ScheduledPost } from "@prisma/client";
+import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
+import type { PostReminder, ScheduledPost } from "@prisma/client";
+
+// Pick a random reminder template, avoiding the index used last time for this
+// post. Mirrors pickFromRoster in milestones.ts. Returns the template plus its
+// index so the caller can persist lastReminderIndex.
+function pickReminderTemplate(lastIndex: number | null): {
+  template: string;
+  index: number;
+} {
+  if (REMINDER_TEMPLATES.length === 1) return { template: REMINDER_TEMPLATES[0], index: 0 };
+  const candidates: number[] = [];
+  for (let i = 0; i < REMINDER_TEMPLATES.length; i++) {
+    if (i !== lastIndex) candidates.push(i);
+  }
+  const index = candidates[Math.floor(Math.random() * candidates.length)];
+  return { template: REMINDER_TEMPLATES[index], index };
+}
 
 export function runScheduler(client: Client) {
   const intervalMs = env.schedulerPollSeconds() * 1000;
@@ -35,6 +54,11 @@ export function runScheduler(client: Client) {
 }
 
 async function tick(client: Client) {
+  await fireDuePosts(client);
+  await fireDueReminders(client);
+}
+
+async function fireDuePosts(client: Client) {
   const now = new Date();
   const due = await prisma.scheduledPost.findMany({
     where: { active: true, nextFireAt: { lte: now, not: null } },
@@ -45,8 +69,9 @@ async function tick(client: Client) {
 
   for (const post of due) {
     try {
-      await sendPost(client, post);
+      const sent = await sendPost(client, post);
       await advancePost(post, post.guild.timezone);
+      await maybeScheduleReminder(post, sent);
     } catch (err) {
       console.error(`[scheduler] failed to send post ${post.id}:`, err);
       // Push nextFireAt forward by 60s so we don't hammer a permanently broken
@@ -67,6 +92,125 @@ async function tick(client: Client) {
   }
 }
 
+// After a post fires, queue a PostReminder if the post wants one. The reminder
+// row snapshots everything the later fire needs (meeting time, chosen body, the
+// exact messages to reply to) so it's independent of later edits to the post.
+async function maybeScheduleReminder(
+  post: ScheduledPost,
+  sent: { meetingAt: Date; messages: Array<{ channelId: string; messageId: string }> }
+) {
+  if (post.reminderMinutes == null) return;
+  if (sent.messages.length === 0) return; // nothing to reply to
+
+  const remindAt = new Date(sent.meetingAt.getTime() - post.reminderMinutes * 60_000);
+  // If the reminder time has already passed (e.g. a very short lead, or clock
+  // skew), skip rather than firing it immediately on the next tick — a "starts
+  // in 0 minutes" nudge moments after the original post is just noise.
+  if (remindAt.getTime() <= Date.now()) {
+    console.log(`[scheduler] "${post.name}" reminder time already passed, skipping`);
+    return;
+  }
+
+  let content = post.reminderContent;
+  if (!content) {
+    const pick = pickReminderTemplate(post.lastReminderIndex);
+    content = pick.template;
+    await prisma.scheduledPost
+      .update({ where: { id: post.id }, data: { lastReminderIndex: pick.index } })
+      .catch((err) =>
+        console.warn(`[scheduler] lastReminderIndex update failed for ${post.id}:`, err)
+      );
+  }
+
+  await prisma.postReminder.create({
+    data: {
+      postId: post.id,
+      firedAt: new Date(),
+      meetingAt: sent.meetingAt,
+      remindAt,
+      content,
+      channelIds: sent.messages.map((m) => m.channelId),
+      messageIds: sent.messages.map((m) => m.messageId),
+    },
+  });
+}
+
+async function fireDueReminders(client: Client) {
+  const now = new Date();
+  const due = await prisma.postReminder.findMany({
+    where: { sentAt: null, remindAt: { lte: now } },
+    take: 25,
+  });
+  if (due.length === 0) return;
+
+  for (const reminder of due) {
+    try {
+      await sendReminder(client, reminder);
+      await prisma.postReminder.update({
+        where: { id: reminder.id },
+        data: { sentAt: new Date() },
+      });
+    } catch (err) {
+      console.error(`[scheduler] failed to send reminder ${reminder.id}:`, err);
+      const message = err instanceof Error ? err.message : String(err);
+      // Don't bump remindAt — the next tick retries. But if the meeting time is
+      // already well past, give up so we don't reply "starting soon" hours late.
+      const giveUp = reminder.meetingAt.getTime() < Date.now() - 60 * 60_000;
+      await prisma.postReminder.update({
+        where: { id: reminder.id },
+        data: {
+          lastFailedAt: new Date(),
+          lastError: message.slice(0, 1000),
+          // Mark as sent (abandoned) once an hour past the meeting.
+          sentAt: giveUp ? new Date() : null,
+        },
+      });
+    }
+  }
+}
+
+async function sendReminder(client: Client, reminder: PostReminder) {
+  const content = substituteTimePlaceholders(reminder.content, reminder.meetingAt);
+
+  let succeeded = 0;
+  const failures: string[] = [];
+  await Promise.all(
+    reminder.channelIds.map(async (channelId, i) => {
+      const messageId = reminder.messageIds[i];
+      try {
+        const channel = await client.channels.fetch(channelId);
+        if (!channel || !channel.isTextBased() || !("send" in channel)) {
+          throw new Error("not a sendable text channel");
+        }
+        // Reply to the original announcement so members can click back to it.
+        // failIfNotExists: false → if the original was deleted, post a normal
+        // message instead of throwing.
+        await channel.send({
+          content,
+          reply: { messageReference: messageId, failIfNotExists: false },
+          allowedMentions: { repliedUser: false },
+        });
+        succeeded++;
+      } catch (err) {
+        failures.push(`${channelId}: ${(err as Error).message}`);
+      }
+    })
+  );
+
+  if (failures.length > 0) {
+    console.error(
+      `[scheduler] reminder ${reminder.id} failed for ${failures.length}/${reminder.channelIds.length} channels:`,
+      failures.join("; ")
+    );
+  }
+  if (succeeded === 0) {
+    throw new Error(`all ${reminder.channelIds.length} channels failed`);
+  }
+  console.log(
+    `[scheduler] sent reminder ${reminder.id} to ${succeeded}/${reminder.channelIds.length} channels`
+  );
+}
+
 // Replaces {meetingTime} and {meetingTime:X} placeholders with Discord's
 // <t:UNIX:X> syntax so the time renders in each viewer's local timezone. Valid
 // suffixes are Discord's standard format chars: t T d D f F R. Bare
@@ -81,7 +225,10 @@ function substituteTimePlaceholders(text: string, meetingTime: Date): string {
 async function sendPost(
   client: Client,
   post: ScheduledPost & { guild: { timezone: string } }
-) {
+): Promise<{
+  meetingAt: Date;
+  messages: Array<{ channelId: string; messageId: string }>;
+}> {
   const mention = post.mentionRoleId ? `<@&${post.mentionRoleId}>` : "";
   const allowedMentions = post.mentionRoleId
     ? { roles: [post.mentionRoleId] }
@@ -114,7 +261,9 @@ async function sendPost(
         allowedMentions,
       };
 
-  let succeeded = 0;
+  // Captured per successful send so a follow-up reminder can reply to the exact
+  // messages we posted (channel + message snowflake).
+  const messages: Array<{ channelId: string; messageId: string }> = [];
   const failures: string[] = [];
   await Promise.all(
     post.channelIds.map(async (channelId) => {
@@ -123,8 +272,8 @@ async function sendPost(
         if (!channel || !channel.isTextBased() || !("send" in channel)) {
           throw new Error("not a sendable text channel");
         }
-        await channel.send(payload);
-        succeeded++;
+        const msg = await channel.send(payload);
+        messages.push({ channelId, messageId: msg.id });
       } catch (err) {
         failures.push(`${channelId}: ${(err as Error).message}`);
       }
@@ -141,13 +290,15 @@ async function sendPost(
   // If every channel failed, throw so the outer handler schedules a retry. If
   // at least one succeeded, swallow the partial failure and advance the post
   // so successful channels don't get duplicate sends on the retry tick.
-  if (succeeded === 0) {
+  if (messages.length === 0) {
     throw new Error(`all ${post.channelIds.length} channels failed`);
   }
 
   console.log(
-    `[scheduler] sent "${post.name}" to ${succeeded}/${post.channelIds.length} channels`
+    `[scheduler] sent "${post.name}" to ${messages.length}/${post.channelIds.length} channels`
   );
+
+  return { meetingAt: meetingTime, messages };
 }
 
 async function advancePost(post: ScheduledPost, guildTimezone: string) {

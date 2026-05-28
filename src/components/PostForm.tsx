@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { ChannelPicker } from "./ChannelPicker";
 import { DiscordPreview } from "./DiscordPreview";
+import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
 
 type Channel = { id: string; name: string; parent_id: string | null };
 type Role = { id: string; name: string; color: number };
@@ -24,6 +25,11 @@ export type PostFormValues = {
   embedImage: string;
   mentionRoleId: string;
   leadMinutes: number;
+  // Reminder follow-up sent as a plain-text reply to the original message.
+  // null = off. Must be 1..(leadMinutes - 1) when set.
+  reminderMinutes: number | null;
+  // Empty string = use the baked-in default roster on the bot side.
+  reminderContent: string;
   active: boolean;
 };
 
@@ -58,6 +64,8 @@ export function PostForm({
     embedImage: "",
     mentionRoleId: "",
     leadMinutes: 0,
+    reminderMinutes: null,
+    reminderContent: "",
     active: true,
     ...initial,
     // `initial.runAt` arrives as an ISO string from the server. Convert to
@@ -394,6 +402,69 @@ export function PostForm({
         </Field>
       </Section>
 
+      <Section title="Follow-up reminder">
+        <div className="flex items-center gap-3 rounded-lg bg-white/[0.03] px-3 py-2 ring-1 ring-white/5">
+          <label className="flex cursor-pointer items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={values.reminderMinutes !== null}
+              disabled={values.leadMinutes < 2}
+              onChange={(e) => {
+                if (e.target.checked) {
+                  // Default to 5 min, or half of leadMinutes if smaller (so it
+                  // satisfies the < leadMinutes constraint out of the box).
+                  const initial = Math.min(5, Math.max(1, values.leadMinutes - 1));
+                  set("reminderMinutes", initial);
+                } else {
+                  set("reminderMinutes", null);
+                  set("reminderContent", "");
+                }
+              }}
+            />
+            Send a plain-text reminder before the meeting
+          </label>
+          <p className="ml-auto text-xs text-white/40">
+            {values.leadMinutes < 2
+              ? "Set lead time ≥ 2 min to enable"
+              : "Replies to the original message"}
+          </p>
+        </div>
+
+        {values.reminderMinutes !== null && (
+          <>
+            <Field label="Fire reminder this many minutes before the meeting">
+              <input
+                type="number"
+                min={1}
+                max={Math.max(1, values.leadMinutes - 1)}
+                value={values.reminderMinutes}
+                onChange={(e) =>
+                  set("reminderMinutes", Math.max(1, Number(e.target.value) || 1))
+                }
+                className={inputClass}
+              />
+              <p className="mt-1 text-xs text-white/40">
+                Must be smaller than the lead time ({values.leadMinutes} min) — otherwise
+                the reminder would fire before the original post.
+              </p>
+            </Field>
+
+            <Field
+              label="Reminder text (optional)"
+              hint="Leave blank to use a random pick from the bot's baked-in roster. Same {meetingTime} placeholders as the body."
+            >
+              <textarea
+                value={values.reminderContent}
+                onChange={(e) => set("reminderContent", e.target.value)}
+                rows={3}
+                placeholder={REMINDER_TEMPLATES[0]}
+                className={inputClass}
+              />
+            </Field>
+          </>
+        )}
+      </Section>
+
       <Section title="Preview">
         <p className="mb-2 text-xs text-white/40">
           What this will look like in Discord. Timestamps use your local clock
@@ -412,6 +483,31 @@ export function PostForm({
           roles={roles}
           channels={channels}
         />
+
+        {values.reminderMinutes !== null && (
+          <div className="mt-4">
+            <p className="mb-2 text-xs text-white/40">
+              Follow-up reminder — posts as a plain-text reply{" "}
+              {values.reminderMinutes} min before the meeting.
+              {!values.reminderContent.trim() &&
+                " Text is a random pick from the bot's roster; one example shown."}
+            </p>
+            <div className="border-l-2 border-white/10 pl-3">
+              <DiscordPreview
+                useEmbed={false}
+                content={values.reminderContent.trim() || REMINDER_TEMPLATES[0]}
+                embedTitle=""
+                embedColor=""
+                embedUrl=""
+                embedImage=""
+                mentionRoleId=""
+                leadMinutes={values.reminderMinutes}
+                roles={roles}
+                channels={channels}
+              />
+            </div>
+          </div>
+        )}
       </Section>
 
       <Section title="State">

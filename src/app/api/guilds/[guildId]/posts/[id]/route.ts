@@ -55,6 +55,8 @@ export const PATCH = withErrors(async (
       embedImage: input.embedImage || null,
       mentionRoleId: input.mentionRoleId || null,
       leadMinutes: input.leadMinutes,
+      reminderMinutes: input.reminderMinutes,
+      reminderContent: input.reminderContent,
       active: input.active,
       nextFireAt,
     },

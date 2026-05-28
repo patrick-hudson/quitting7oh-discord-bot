@@ -19,6 +19,17 @@ export const postSchema = z
     embedImage: z.string().url().optional().or(z.literal("")),
     mentionRoleId: z.string().regex(/^\d{17,21}$/).optional().or(z.literal("")),
     leadMinutes: z.number().int().min(0).max(1440).default(0),
+    // Reminder follow-up. null = off. When set, must be in [1, leadMinutes-1]
+    // (see superRefine below — Zod can't express cross-field constraints inline).
+    reminderMinutes: z.number().int().min(1).max(1439).nullable().default(null),
+    // Empty string from the form means "no override" — normalize to null so the
+    // scheduler can fall back to the baked-in roster.
+    reminderContent: z
+      .string()
+      .max(2000)
+      .optional()
+      .transform((v) => (v && v.trim().length > 0 ? v : null))
+      .nullable(),
     active: z.boolean(),
   })
   .superRefine((v, ctx) => {
@@ -27,6 +38,16 @@ export const postSchema = z
     }
     if (v.scheduleKind === "oneoff" && !v.runAt) {
       ctx.addIssue({ code: "custom", path: ["runAt"], message: "Run-at datetime required" });
+    }
+    if (v.reminderMinutes !== null && v.reminderMinutes !== undefined) {
+      if (v.reminderMinutes >= v.leadMinutes) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["reminderMinutes"],
+          message:
+            "Reminder lead must be smaller than leadMinutes — otherwise the reminder fires before (or with) the original post.",
+        });
+      }
     }
   });
 

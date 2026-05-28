@@ -123,6 +123,18 @@ model ScheduledPost {
   // Used to resolve {meetingTime} placeholders in the body.
   leadMinutes Int @default(0)
 
+  // Optional follow-up reminder. If set, the bot replies to each original
+  // message N minutes before the meeting with a plain-text nudge. Must be
+  // 1..(leadMinutes - 1) — validated at the form/API layer. null = off.
+  reminderMinutes Int?
+  // Per-post override for the reminder body. Same {meetingTime} placeholders
+  // as `content`. null = pick from the baked-in reminder roster (see the
+  // scheduler), avoiding the index in `lastReminderIndex`.
+  reminderContent String? @db.Text
+  // Index of the last baked-in reminder template used for this post, so the
+  // picker can avoid immediate repeats. Mirrors MilestoneConfig.lastCongratsIndex.
+  lastReminderIndex Int?
+
   // State
   active       Boolean   @default(true)
   lastFiredAt  DateTime?
@@ -137,8 +149,44 @@ model ScheduledPost {
   updatedAt DateTime @updatedAt
   createdBy String? // Discord user id
 
+  reminders PostReminder[]
+
   @@index([active, nextFireAt])
   @@index([guildId])
+}
+
+// One row per actual fire of a ScheduledPost that has reminderMinutes set.
+// Captures the (channelId, messageId) pairs we successfully sent so the
+// reminder fire can reply to each one. Rows stick around after firing as
+// a thin audit trail; prune externally if the table grows.
+model PostReminder {
+  id      String        @id @default(cuid())
+  postId  String
+  post    ScheduledPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  firedAt   DateTime // when the parent post actually fired
+  meetingAt DateTime // the meeting itself — snapshotted so {meetingTime} renders
+                    // the same value even if the parent post is edited later
+  remindAt  DateTime // when this reminder should fire (meetingAt - reminderMinutes)
+  sentAt    DateTime? // null = pending; set after the reply send succeeds
+  // The reminder body, snapshotted at fire time (still holding {meetingTime}
+  // placeholders, which are substituted with `meetingAt` at send time). Either
+  // the post's reminderContent override or a pick from the baked-in roster —
+  // stored so a later edit/redeploy can't change what this reminder says.
+  content String @db.Text
+  // Parallel arrays: channelIds[i] received messageIds[i] at the original
+  // fire. Channels where the original send failed are omitted, since there's
+  // no message to reply to. Order matters; do not sort or dedupe.
+  channelIds String[]
+  messageIds String[]
+  // Most recent send failure for surfacing in the dashboard. Same shape as
+  // ScheduledPost.lastFailedAt / lastError.
+  lastFailedAt DateTime?
+  lastError    String?   @db.Text
+
+  // The "due now" query is `WHERE sentAt IS NULL AND remindAt <= now()`,
+  // and rows are short-lived (minutes), so this composite covers it cheaply.
+  @@index([sentAt, remindAt])
+  @@index([postId])
 }
 
 // --- Auth.js (NextAuth v5) tables ---
