@@ -13,6 +13,10 @@ Pieces:
 
 Companion docs:
 
+- [KA_MEETINGS.md](KA_MEETINGS.md) — the seeded Kratom Anonymous meeting posts + seeder script.
+- [REMINDERS.md](REMINDERS.md) — follow-up reminders and the bulk-enable scripts.
+- [LEAD_TIME.md](LEAD_TIME.md) — changing a post's warning lead time (preview/apply scripts).
+- [MIGRATIONS.md](MIGRATIONS.md) — schema-change workflow (manual SQL + additive `db push`).
 - [LIGHTSAIL.md](LIGHTSAIL.md) — checklist for moving from local Docker to AWS Lightsail.
 - [UPGRADE_PLAN.md](UPGRADE_PLAN.md) — staged dependency-upgrade plan.
 
