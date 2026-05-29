@@ -63,11 +63,14 @@ async function main() {
 
   for (const p of posts) {
     const oldLead = p.leadMinutes;
-    const delta = oldLead - NEW_LEAD;
+    // Keep the meeting fixed: meeting = cron + oldLead = (cron + cronShift) +
+    // NEW_LEAD, so the cron moves by (oldLead - NEW_LEAD). Increasing the lead
+    // makes this negative (cron fires earlier).
+    const cronShift = oldLead - NEW_LEAD;
     const meeting = meetingTimeFromCron(p.cron!, oldLead);
     const meetingStr = meeting ? formatHM(meeting.hour, meeting.minute) : "?";
 
-    if (delta === 0) {
+    if (cronShift === 0) {
       console.log(`  · ${p.name}`);
       console.log(`    meeting ~${meetingStr} — already at lead ${oldLead} min, skip`);
       console.log("");
@@ -75,7 +78,7 @@ async function main() {
       continue;
     }
 
-    const shift = shiftCronByMinutes(p.cron!, -delta);
+    const shift = shiftCronByMinutes(p.cron!, cronShift);
     if (!shift.ok) {
       console.log(`  ✗ ${p.name}`);
       console.log(`    cron "${p.cron}" — cannot shift: ${shift.error}`);
