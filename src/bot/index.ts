@@ -10,6 +10,7 @@ import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
 import { prisma } from "@/lib/db";
 import { iconUrl } from "@/lib/discord-rest";
 import { runScheduler } from "./scheduler";
+import { runRedditPoller } from "./reddit-poller";
 import { registerMilestoneHandler } from "./milestones";
 
 async function main() {
@@ -66,6 +67,7 @@ async function main() {
       });
     }
     runScheduler(client);
+    runRedditPoller(client);
   });
 
   client.on(Events.GuildCreate, async (g) => {

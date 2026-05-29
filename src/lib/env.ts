@@ -17,5 +17,8 @@ export const env = {
   schedulerPollSeconds(): number {
     return Number(process.env.SCHEDULER_POLL_SECONDS ?? "30");
   },
+  redditPollSeconds(): number {
+    return Number(process.env.REDDIT_POLL_SECONDS ?? "300");
+  },
   required,
 };

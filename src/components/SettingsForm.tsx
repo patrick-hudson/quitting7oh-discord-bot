@@ -20,14 +20,25 @@ export function SettingsForm({
   guildId,
   initial,
   roles,
+  channels,
 }: {
   guildId: string;
-  initial: { timezone: string; adminRoleId: string };
+  initial: {
+    timezone: string;
+    adminRoleId: string;
+    redditEnabled: boolean;
+    redditSubreddit: string;
+    redditChannelId: string;
+  };
   roles: Array<{ id: string; name: string }>;
+  channels: Array<{ id: string; name: string }>;
 }) {
   const router = useRouter();
   const [timezone, setTimezone] = useState(initial.timezone);
   const [adminRoleId, setAdminRoleId] = useState(initial.adminRoleId);
+  const [redditEnabled, setRedditEnabled] = useState(initial.redditEnabled);
+  const [redditSubreddit, setRedditSubreddit] = useState(initial.redditSubreddit);
+  const [redditChannelId, setRedditChannelId] = useState(initial.redditChannelId);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +51,14 @@ export function SettingsForm({
     const res = await fetch(`/api/guilds/${guildId}/settings`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ timezone, adminRoleId: adminRoleId || null }),
+      body: JSON.stringify({
+        timezone,
+        adminRoleId: adminRoleId || null,
+        redditEnabled,
+        // Strip a leading "r/" if the user pastes it; server validates the rest.
+        redditSubreddit: redditSubreddit.trim().replace(/^\/?r\//i, ""),
+        redditChannelId: redditChannelId || null,
+      }),
     });
     setSaving(false);
     if (!res.ok) {
@@ -96,6 +114,60 @@ export function SettingsForm({
         <p className="mt-1 text-xs text-white/40">
           Discord users with this role gain access to this guild&apos;s posts in the portal.
         </p>
+      </div>
+
+      <div className="space-y-4 border-t border-white/10 pt-6">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-white/50">
+            Reddit announcements
+          </h2>
+          <p className="mt-1 text-xs text-white/40">
+            Post an embed to a channel whenever your subreddit gets a new submission.
+          </p>
+        </div>
+
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={redditEnabled}
+            onChange={(e) => setRedditEnabled(e.target.checked)}
+          />
+          Announce new subreddit posts
+        </label>
+
+        <div>
+          <label className="mb-1 block text-sm text-white/80">Subreddit</label>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-white/40">r/</span>
+            <input
+              value={redditSubreddit}
+              onChange={(e) => setRedditSubreddit(e.target.value)}
+              placeholder="quitting7oh"
+              className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
+            />
+          </div>
+          <p className="mt-1 text-xs text-white/40">
+            Just the name — no <code className="text-white/60">r/</code> needed.
+          </p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm text-white/80">Announce in channel</label>
+          <select
+            value={redditChannelId}
+            onChange={(e) => setRedditChannelId(e.target.value)}
+            className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
+          >
+            <option value="" className="bg-neutral-900">
+              None
+            </option>
+            {channels.map((c) => (
+              <option key={c.id} value={c.id} className="bg-neutral-900">
+                #{c.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {error && (

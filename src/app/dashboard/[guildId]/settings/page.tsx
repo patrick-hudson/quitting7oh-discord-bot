@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db";
-import { listRoles } from "@/lib/discord-rest";
+import { listRoles, listTextChannels } from "@/lib/discord-rest";
 import { SettingsForm } from "@/components/SettingsForm";
 
 export default async function SettingsPage({
@@ -8,9 +8,10 @@ export default async function SettingsPage({
   params: Promise<{ guildId: string }>;
 }) {
   const { guildId } = await params;
-  const [guild, roles] = await Promise.all([
+  const [guild, roles, channels] = await Promise.all([
     prisma.guild.findUnique({ where: { id: guildId } }),
     listRoles(guildId).catch(() => []),
+    listTextChannels(guildId).catch(() => []),
   ]);
   if (!guild) return null;
 
@@ -22,8 +23,15 @@ export default async function SettingsPage({
       <div className="mt-8">
         <SettingsForm
           guildId={guildId}
-          initial={{ timezone: guild.timezone, adminRoleId: guild.adminRoleId ?? "" }}
+          initial={{
+            timezone: guild.timezone,
+            adminRoleId: guild.adminRoleId ?? "",
+            redditEnabled: guild.redditEnabled,
+            redditSubreddit: guild.redditSubreddit ?? "",
+            redditChannelId: guild.redditChannelId ?? "",
+          }}
           roles={roles.map((r) => ({ id: r.id, name: r.name }))}
+          channels={channels.map((c) => ({ id: c.id, name: c.name }))}
         />
       </div>
     </div>

@@ -20,6 +20,18 @@ model Guild {
   // Members with this Discord role get full portal access for this guild.
   // null = only BOOTSTRAP_ADMIN_USER_IDS can manage this guild.
   adminRoleId String?
+
+  // Reddit new-post announcements. One watched subreddit per guild: when
+  // redditEnabled is true, the bot polls /r/<redditSubreddit>/new and posts
+  // each new submission to redditChannelId as an embed.
+  redditEnabled   Boolean @default(false)
+  redditSubreddit String? // subreddit name without the "r/" prefix
+  redditChannelId String? // Discord channel snowflake to announce into
+  // High-water mark: the created time of the newest submission already
+  // announced. Only items strictly newer are posted. null until the first poll
+  // seeds a baseline (which announces nothing, to avoid a backlog flood).
+  redditLastPostAt DateTime?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
