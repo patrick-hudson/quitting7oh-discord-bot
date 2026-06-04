@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { listRoles, listTextChannels } from "@/lib/discord-rest";
 import { THEMES } from "@/lib/milestone-themes";
@@ -205,7 +206,16 @@ export default async function MilestonesPage({
 
   return (
     <div className="mx-auto max-w-3xl">
-      <h1 className="text-2xl font-semibold tracking-tight">Milestone roles</h1>
+      <div className="flex items-start justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">Milestone roles</h1>
+        <Link
+          href={`/dashboard/${guildId}/milestones/advanced`}
+          className="rounded-lg bg-white/5 px-3 py-1.5 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/10"
+          title="Edit every tier's congrats roster side-by-side"
+        >
+          Bulk-edit templates →
+        </Link>
+      </div>
       <p className="mt-1 text-sm text-white/60">
         Publish a single message with buttons so members can self-claim a milestone role.
         Clicking a button replaces any earlier milestone role they hold.

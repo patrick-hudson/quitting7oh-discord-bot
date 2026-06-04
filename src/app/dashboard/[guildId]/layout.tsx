@@ -1,6 +1,8 @@
 import { auth } from "@/auth";
 import { redirect } from "next/navigation";
-import { Nav } from "@/components/Nav";
+import { AppSidebar } from "@/components/AppSidebar";
+import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { checkGuildAccess, listAccessibleGuilds } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { getGuild as discordGetGuild, iconUrl } from "@/lib/discord-rest";
@@ -30,16 +32,27 @@ export default async function GuildLayout({
   }
 
   const guilds = await listAccessibleGuilds(session.user.discordId);
+  const currentGuildName =
+    guilds.find((g) => g.id === guildId)?.name ?? "Unknown guild";
 
   return (
-    <div className="min-h-screen">
-      <Nav
-        guilds={guilds.map((g) => ({ id: g.id, name: g.name }))}
-        currentGuildId={guildId}
-        user={{ name: session.user.name, image: session.user.image }}
-      />
-      <main className="mx-auto max-w-6xl px-6 py-8">{children}</main>
-    </div>
+    <TooltipProvider>
+      <SidebarProvider>
+        <AppSidebar
+          guilds={guilds.map((g) => ({ id: g.id, name: g.name }))}
+          currentGuildId={guildId}
+          currentGuildName={currentGuildName}
+          user={{ name: session.user.name, image: session.user.image }}
+        />
+        <SidebarInset>
+          <header className="flex h-12 items-center gap-2 border-b border-sidebar-border px-4">
+            <SidebarTrigger className="-ml-1" />
+            <span className="text-sm text-foreground/60">{currentGuildName}</span>
+          </header>
+          <main className="mx-auto w-full max-w-6xl px-6 py-8">{children}</main>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
   );
 }
 

@@ -29,12 +29,21 @@ export default async function PostsPage({
             Messages the bot will post into Discord channels on a schedule.
           </p>
         </div>
-        <Link
-          href={`/dashboard/${guildId}/new`}
-          className="rounded-lg bg-[color:var(--color-brand-600)] px-4 py-2 text-sm font-medium hover:bg-[color:var(--color-brand-500)]"
-        >
-          + New Post
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/dashboard/${guildId}/posts/advanced`}
+            className="rounded-lg bg-white/5 px-3 py-2 text-sm text-white/80 ring-1 ring-white/10 hover:bg-white/10"
+            title="Edit every post's fields side-by-side"
+          >
+            Bulk-edit →
+          </Link>
+          <Link
+            href={`/dashboard/${guildId}/new`}
+            className="rounded-lg bg-[color:var(--color-brand-600)] px-4 py-2 text-sm font-medium hover:bg-[color:var(--color-brand-500)]"
+          >
+            + New Post
+          </Link>
+        </div>
       </div>
 
       {posts.length === 0 ? (
