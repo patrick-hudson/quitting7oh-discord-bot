@@ -32,6 +32,12 @@ model Guild {
   // seeds a baseline (which announces nothing, to avoid a backlog flood).
   redditLastPostAt DateTime?
 
+  // Per-guild override for the scheduler's reminder-template roster (used when
+  // a ScheduledPost has reminderContent = null). Empty array = fall back to the
+  // baked-in defaults in src/lib/reminder-templates.ts. Same picker as the
+  // milestone congrats roster: random, avoiding the last index used per post.
+  reminderTemplates String[] @default([])
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

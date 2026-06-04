@@ -46,11 +46,20 @@ Open a post in the dashboard and use the **Follow-up reminder** section:
 
 ## Default reminder text (roster)
 
-When `reminderContent` is blank, the bot picks a random line from
-[src/lib/reminder-templates.ts](src/lib/reminder-templates.ts) each time the post
-fires, avoiding the previous pick. All entries use `{meetingTime:R}` so they read
-"starting in 5 minutes" regardless of the configured reminder lead. Edit that
-file to change or extend the defaults.
+When `reminderContent` is blank, the bot picks a random line from a roster each
+time the post fires, avoiding the previous pick. All entries use
+`{meetingTime:R}` so they read "starting in 5 minutes" regardless of the
+configured reminder lead.
+
+The roster comes from one of two places:
+
+- **Per-guild override** — `Guild.reminderTemplates` (edited on the portal's
+  **Defaults** page). If this is non-empty, the bot uses it.
+- **Built-in fallback** — [src/lib/reminder-templates.ts](src/lib/reminder-templates.ts),
+  used when the guild hasn't set its own. Edit this file to change the bot's
+  ship-defaults.
+
+So: per-guild override > built-in. Per-post `reminderContent` still trumps both.
 
 ## Bulk-enable across many posts
 

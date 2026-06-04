@@ -21,17 +21,17 @@ import type { PostReminder, ScheduledPost } from "@prisma/client";
 // Pick a random reminder template, avoiding the index used last time for this
 // post. Mirrors pickFromRoster in milestones.ts. Returns the template plus its
 // index so the caller can persist lastReminderIndex.
-function pickReminderTemplate(lastIndex: number | null): {
-  template: string;
-  index: number;
-} {
-  if (REMINDER_TEMPLATES.length === 1) return { template: REMINDER_TEMPLATES[0], index: 0 };
+function pickReminderTemplate(
+  roster: string[],
+  lastIndex: number | null
+): { template: string; index: number } {
+  if (roster.length === 1) return { template: roster[0], index: 0 };
   const candidates: number[] = [];
-  for (let i = 0; i < REMINDER_TEMPLATES.length; i++) {
+  for (let i = 0; i < roster.length; i++) {
     if (i !== lastIndex) candidates.push(i);
   }
   const index = candidates[Math.floor(Math.random() * candidates.length)];
-  return { template: REMINDER_TEMPLATES[index], index };
+  return { template: roster[index], index };
 }
 
 export function runScheduler(client: Client) {
@@ -96,7 +96,7 @@ async function fireDuePosts(client: Client) {
 // row snapshots everything the later fire needs (meeting time, chosen body, the
 // exact messages to reply to) so it's independent of later edits to the post.
 async function maybeScheduleReminder(
-  post: ScheduledPost,
+  post: ScheduledPost & { guild: { reminderTemplates: string[] } },
   sent: { meetingAt: Date; messages: Array<{ channelId: string; messageId: string }> }
 ) {
   if (post.reminderMinutes == null) return;
@@ -113,7 +113,13 @@ async function maybeScheduleReminder(
 
   let content = post.reminderContent;
   if (!content) {
-    const pick = pickReminderTemplate(post.lastReminderIndex);
+    // Prefer the guild's custom roster (admin-curated in /defaults); fall back
+    // to the baked-in defaults when the guild hasn't set any.
+    const roster =
+      post.guild.reminderTemplates.length > 0
+        ? post.guild.reminderTemplates
+        : REMINDER_TEMPLATES;
+    const pick = pickReminderTemplate(roster, post.lastReminderIndex);
     content = pick.template;
     await prisma.scheduledPost
       .update({ where: { id: post.id }, data: { lastReminderIndex: pick.index } })
