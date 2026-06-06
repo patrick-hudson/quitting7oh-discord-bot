@@ -6,9 +6,10 @@
 // embed-specific fields. Saves via the same per-post PATCH endpoint as the
 // single-post edit form; only dirty rows are sent on Save all.
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChannelPicker } from "./ChannelPicker";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 type Channel = { id: string; name: string; parent_id: string | null };
 type Role = { id: string; name: string; color: number };
@@ -60,6 +61,12 @@ export function PostsAdvancedForm({
   const [saving, setSaving] = useState(false);
   const [expandedChannels, setExpandedChannels] = useState<Set<string>>(new Set());
   const [expandedEmbed, setExpandedEmbed] = useState<Set<string>>(new Set());
+  // Per-post focus-time snapshot of leadMinutes (keyed by post id), so a
+  // cancelled confirmation can revert the lead value the user just typed.
+  // Single shared confirmation state — at most one open at a time since the
+  // user can only be editing one input at a moment.
+  const leadOnFocusRef = useRef<Record<string, number>>({});
+  const [leadConfirm, setLeadConfirm] = useState<{ postId: string } | null>(null);
 
   function update(id: string, patch: Partial<PostRowValues>) {
     setPosts((arr) => arr.map((p) => (p.id === id ? { ...p, ...patch } : p)));
@@ -301,9 +308,20 @@ export function PostsAdvancedForm({
                       min={0}
                       max={1440}
                       value={p.leadMinutes}
+                      onFocus={() => {
+                        leadOnFocusRef.current[p.id] = p.leadMinutes;
+                      }}
                       onChange={(e) =>
                         update(p.id, { leadMinutes: Math.max(0, Number(e.target.value) || 0) })
                       }
+                      onBlur={() => {
+                        if (
+                          p.reminderMinutes !== null &&
+                          p.leadMinutes <= p.reminderMinutes
+                        ) {
+                          setLeadConfirm({ postId: p.id });
+                        }
+                      }}
                       className={inputCls}
                     />
                   </div>
@@ -314,7 +332,8 @@ export function PostsAdvancedForm({
                     <input
                       type="checkbox"
                       checked={p.reminderMinutes !== null}
-                      disabled={p.leadMinutes < 2}
+                      // Only block ENABLING — unchecking is always allowed.
+                      disabled={p.reminderMinutes === null && p.leadMinutes < 2}
                       onChange={(e) => {
                         if (e.target.checked) {
                           const initial = Math.min(5, Math.max(1, p.leadMinutes - 1));
@@ -328,7 +347,7 @@ export function PostsAdvancedForm({
                     {p.reminderMinutes !== null && (
                       <span className="text-white/40">— {p.reminderMinutes} min before</span>
                     )}
-                    {p.leadMinutes < 2 && (
+                    {p.reminderMinutes === null && p.leadMinutes < 2 && (
                       <span className="ml-auto text-[10px] text-white/30">lead ≥ 2 to enable</span>
                     )}
                   </label>
@@ -430,6 +449,46 @@ export function PostsAdvancedForm({
           </section>
         );
       })}
+
+      {(() => {
+        const p = leadConfirm
+          ? posts.find((x) => x.id === leadConfirm.postId)
+          : null;
+        return (
+          <ConfirmDialog
+            open={p !== null && p !== undefined}
+            title="Disable the reminder?"
+            description={
+              p ? (
+                <>
+                  <span className="text-white/80">{p.name}</span>: a lead time
+                  of {p.leadMinutes} min can&apos;t fit the current reminder
+                  ({p.reminderMinutes} min before the meeting). Continuing will
+                  disable the reminder
+                  {p.reminderContent.trim().length > 0
+                    ? " and clear its custom text."
+                    : "."}
+                </>
+              ) : null
+            }
+            confirmLabel="Disable reminder"
+            destructive
+            onCancel={() => {
+              if (!p) return;
+              const prev = leadOnFocusRef.current[p.id];
+              if (typeof prev === "number") {
+                update(p.id, { leadMinutes: prev });
+              }
+              setLeadConfirm(null);
+            }}
+            onConfirm={() => {
+              if (!p) return;
+              update(p.id, { reminderMinutes: null, reminderContent: "" });
+              setLeadConfirm(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

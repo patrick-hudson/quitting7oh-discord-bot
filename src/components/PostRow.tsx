@@ -28,6 +28,12 @@ export function PostRow({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [active, setActive] = useState(post.active);
+  // "queued" shows for a few seconds after Fire-now succeeds, then auto-clears.
+  // The scheduler delivers within one poll interval (~30s); we don't try to
+  // know exactly when it lands, just show that the request was accepted.
+  const [fireState, setFireState] = useState<"idle" | "firing" | "queued" | "error">(
+    "idle"
+  );
 
   async function toggle() {
     const next = !active;
@@ -38,6 +44,27 @@ export function PostRow({
       body: JSON.stringify({ active: next }),
     });
     if (!res.ok) setActive(!next);
+    startTransition(() => router.refresh());
+  }
+
+  async function fireNow() {
+    if (
+      !confirm(
+        `Fire "${post.name}" now? Members in its channels will see the message immediately.`
+      )
+    )
+      return;
+    setFireState("firing");
+    const res = await fetch(`/api/guilds/${guildId}/posts/${post.id}/fire-now`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      setFireState("error");
+      setTimeout(() => setFireState("idle"), 3000);
+      return;
+    }
+    setFireState("queued");
+    setTimeout(() => setFireState("idle"), 5000);
     startTransition(() => router.refresh());
   }
 
@@ -118,6 +145,26 @@ export function PostRow({
       >
         Edit
       </Link>
+      <button
+        onClick={fireNow}
+        disabled={fireState === "firing" || fireState === "queued"}
+        title="Send this post immediately, without affecting its schedule"
+        className={`rounded-md px-2.5 py-1 text-xs ring-1 disabled:cursor-not-allowed ${
+          fireState === "queued"
+            ? "text-emerald-300 ring-emerald-500/30"
+            : fireState === "error"
+              ? "text-red-300 ring-red-500/30"
+              : "text-white/70 ring-white/10 hover:bg-white/5"
+        }`}
+      >
+        {fireState === "firing"
+          ? "…"
+          : fireState === "queued"
+            ? "Queued ~30s"
+            : fireState === "error"
+              ? "Failed"
+              : "Fire now"}
+      </button>
       <button
         onClick={remove}
         className="rounded-md px-2.5 py-1 text-xs text-red-300/80 ring-1 ring-red-500/20 hover:bg-red-500/10"

@@ -16,6 +16,7 @@ import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 import { computeNextFireAt } from "@/lib/cron";
 import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
+import { substituteAnsiColorTokens } from "@/lib/ansi-tokens";
 import type { PostReminder, ScheduledPost } from "@prisma/client";
 
 // Pick a random reminder template, avoiding the index used last time for this
@@ -55,6 +56,7 @@ export function runScheduler(client: Client) {
 
 async function tick(client: Client) {
   await fireDuePosts(client);
+  await fireManualRequests(client);
   await fireDueReminders(client);
 }
 
@@ -85,6 +87,44 @@ async function fireDuePosts(client: Client) {
           nextFireAt: retryAt,
           lastFailedAt: new Date(),
           // Truncate so a 50KB stack trace doesn't bloat the row.
+          lastError: message.slice(0, 1000),
+        },
+      });
+    }
+  }
+}
+
+// "Fire now" requests from the portal. Honored regardless of `active` (the
+// admin explicitly clicked the button) and without touching cron / nextFireAt
+// so the regular schedule continues unchanged. Reminders still get scheduled
+// if the post has reminderMinutes set.
+async function fireManualRequests(client: Client) {
+  const due = await prisma.scheduledPost.findMany({
+    where: { manualFireRequested: true },
+    include: { guild: true },
+    take: 25,
+  });
+  if (due.length === 0) return;
+
+  for (const post of due) {
+    try {
+      const sent = await sendPost(client, post);
+      await prisma.scheduledPost.update({
+        where: { id: post.id },
+        data: { manualFireRequested: false, lastFiredAt: new Date() },
+      });
+      await maybeScheduleReminder(post, sent);
+      console.log(`[scheduler] manual fire delivered "${post.name}"`);
+    } catch (err) {
+      console.error(`[scheduler] manual fire failed for ${post.id}:`, err);
+      const message = err instanceof Error ? err.message : String(err);
+      // Clear the flag either way — leaving it true would have us retry every
+      // tick on a permanently broken post. The admin can click again to retry.
+      await prisma.scheduledPost.update({
+        where: { id: post.id },
+        data: {
+          manualFireRequested: false,
+          lastFailedAt: new Date(),
           lastError: message.slice(0, 1000),
         },
       });
@@ -145,6 +185,9 @@ async function fireDueReminders(client: Client) {
   const now = new Date();
   const due = await prisma.postReminder.findMany({
     where: { sentAt: null, remindAt: { lte: now } },
+    // guildId comes through the post relation so sendReminder can rewrite
+    // #channel-name mentions against the right guild's channel list.
+    include: { post: { select: { guildId: true } } },
     take: 25,
   });
   if (due.length === 0) return;
@@ -175,8 +218,17 @@ async function fireDueReminders(client: Client) {
   }
 }
 
-async function sendReminder(client: Client, reminder: PostReminder) {
-  const content = substituteTimePlaceholders(reminder.content, reminder.meetingAt);
+async function sendReminder(
+  client: Client,
+  reminder: PostReminder & { post: { guildId: string } }
+) {
+  const channelsByName = channelNameMapFor(client, reminder.post.guildId);
+  const content = substituteAnsiColorTokens(
+    substituteChannelMentions(
+      substituteTimePlaceholders(reminder.content, reminder.meetingAt),
+      channelsByName
+    )
+  );
 
   let succeeded = 0;
   const failures: string[] = [];
@@ -228,6 +280,40 @@ function substituteTimePlaceholders(text: string, meetingTime: Date): string {
   });
 }
 
+// Build a lowercased name→id map of every channel the bot can see in the guild.
+// Empty map if the guild isn't in cache (bot not present, or hasn't received
+// the GUILD_CREATE yet). Used to rewrite #channel-name into Discord's <#id>
+// mention syntax so it renders as a clickable channel pill.
+function channelNameMapFor(client: Client, guildId: string): Map<string, string> {
+  const map = new Map<string, string>();
+  const guild = client.guilds.cache.get(guildId);
+  if (!guild) return map;
+  for (const [id, ch] of guild.channels.cache) {
+    if ("name" in ch && typeof ch.name === "string") {
+      map.set(ch.name.toLowerCase(), id);
+    }
+  }
+  return map;
+}
+
+// Replace #channel-name → <#id> for channels the bot can see in the guild.
+// Names that don't match anything are left alone — a typo shouldn't break the
+// message, just not render as a link. Negative lookbehind avoids matching
+// inside URLs / words (e.g. `path/#anchor`).
+function substituteChannelMentions(
+  text: string,
+  channelsByName: Map<string, string>
+): string {
+  return text.replace(
+    /(?<![A-Za-z0-9])#([A-Za-z0-9][A-Za-z0-9_-]{0,99})/g,
+    (m, name: string) => {
+      const id = channelsByName.get(name.toLowerCase());
+      return id ? `<#${id}>` : m;
+    }
+  );
+}
+
+
 async function sendPost(
   client: Client,
   post: ScheduledPost & { guild: { timezone: string } }
@@ -244,9 +330,21 @@ async function sendPost(
   // scheduled nextFireAt) avoids confusing "X seconds ago" rendering from the
   // up-to-one-poll-interval delay between scheduled and actual fire.
   const meetingTime = new Date(Date.now() + post.leadMinutes * 60_000);
-  const content = substituteTimePlaceholders(post.content, meetingTime);
+  const channelsByName = channelNameMapFor(client, post.guildId);
+  // Body supports time, channel-mention, and color tokens. Embed title gets
+  // time + channel mentions but skips color tokens — titles aren't inside an
+  // ansi code block, so color escapes would render as garbage there.
+  const content = substituteAnsiColorTokens(
+    substituteChannelMentions(
+      substituteTimePlaceholders(post.content, meetingTime),
+      channelsByName
+    )
+  );
   const embedTitle = post.embedTitle
-    ? substituteTimePlaceholders(post.embedTitle, meetingTime)
+    ? substituteChannelMentions(
+        substituteTimePlaceholders(post.embedTitle, meetingTime),
+        channelsByName
+      )
     : null;
 
   // Build the payload once and fan out to every target channel.

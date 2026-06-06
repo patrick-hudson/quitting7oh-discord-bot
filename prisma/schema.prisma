@@ -157,6 +157,11 @@ model ScheduledPost {
   active       Boolean   @default(true)
   lastFiredAt  DateTime?
   nextFireAt   DateTime? // null = no future run scheduled (e.g. fired one-off)
+  // Out-of-band manual fire request set by the portal's "Fire now" button. The
+  // scheduler picks these up on each tick alongside the regular due-by-time
+  // query, sends the message, and clears the flag — without touching cron /
+  // runAt / nextFireAt, so the normal schedule is unaffected.
+  manualFireRequested Boolean @default(false)
   // Most recent send failure — set by the scheduler's catch path. lastError is
   // the truncated error message; null when the post has never failed.
   lastFailedAt DateTime?

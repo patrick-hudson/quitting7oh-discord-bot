@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChannelPicker } from "./ChannelPicker";
 import { DiscordPreview } from "./DiscordPreview";
 import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 
 type Channel = { id: string; name: string; parent_id: string | null };
 type Role = { id: string; name: string; color: number };
@@ -77,6 +79,38 @@ export function PostForm({
   const [preview, setPreview] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<"stay" | "return" | null>(null);
+  // Lead-time confirmation: when a user lowers leadMinutes such that the
+  // currently-enabled reminder can no longer fire (reminderMinutes >= leadMinutes),
+  // we ask before clearing it. `leadOnFocusRef` snapshots the value at focus so
+  // Cancel can revert. The check fires on blur — not onChange — so typing "15"
+  // doesn't briefly open a modal while passing through "1".
+  const leadOnFocusRef = useRef<number>(initial?.leadMinutes ?? 0);
+  const [leadConfirmOpen, setLeadConfirmOpen] = useState(false);
+  // For the "Wrap in ansi block" toolbar action — needs the textarea node
+  // to read selection start/end and to restore cursor after the value update.
+  const contentTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  function wrapContentInAnsiBlock() {
+    const ta = contentTextareaRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const before = values.content.slice(0, start);
+    const selected = values.content.slice(start, end);
+    const after = values.content.slice(end);
+    const opener = "```ansi\n";
+    const closer = "\n```";
+    const insertion = selected ? opener + selected + closer : opener + closer;
+    set("content", before + insertion + after);
+    // React needs a tick to flush the new value into the textarea; restore
+    // selection on the next frame so the cursor lands inside the block.
+    requestAnimationFrame(() => {
+      ta.focus();
+      const innerStart = start + opener.length;
+      const innerEnd = innerStart + selected.length;
+      ta.setSelectionRange(innerStart, innerEnd);
+    });
+  }
   const [isDirty, setIsDirty] = useState(false);
   const [toast, setToast] = useState<{
     message: string;
@@ -350,7 +384,18 @@ export function PostForm({
         )}
 
         <Field label={values.useEmbed ? "Embed description" : "Message content"}>
+          <div className="mb-1 flex justify-end">
+            <button
+              type="button"
+              onClick={wrapContentInAnsiBlock}
+              title="Wrap the selected text in a ```ansi``` color block (or insert an empty one at the cursor)"
+              className="rounded-md bg-white/5 px-2 py-1 font-mono text-[11px] text-white/60 ring-1 ring-white/10 hover:bg-white/10 hover:text-white"
+            >
+              ```ansi
+            </button>
+          </div>
           <textarea
+            ref={contentTextareaRef}
             required
             value={values.content}
             onChange={(e) => set("content", e.target.value)}
@@ -366,6 +411,13 @@ export function PostForm({
             <code className="ml-1 text-white/60">{`{meetingTime:F}`}</code> full date+time.
             Set the lead time below so &quot;in 5 minutes&quot; renders correctly.
           </p>
+          <p className="mt-2 text-xs text-white/40">
+            Color tokens (inside a <code className="text-white/60">```ansi</code> code
+            block):{" "}
+            <code className="text-white/60">{`{red} {green} {yellow} {blue} {pink} {cyan} {gray} {white} {bold} {underline} {reset}`}</code>
+            . Example:
+            <code className="ml-1 text-white/60">{`{bold}{red}🚨 ALERT{reset}`}</code>
+          </p>
         </Field>
 
         <Field label="Lead time (minutes before meeting)">
@@ -374,7 +426,20 @@ export function PostForm({
             min={0}
             max={1440}
             value={values.leadMinutes}
-            onChange={(e) => set("leadMinutes", Number(e.target.value) || 0)}
+            onFocus={() => {
+              leadOnFocusRef.current = values.leadMinutes;
+            }}
+            onChange={(e) =>
+              set("leadMinutes", Math.max(0, Number(e.target.value) || 0))
+            }
+            onBlur={() => {
+              if (
+                values.reminderMinutes !== null &&
+                values.leadMinutes <= values.reminderMinutes
+              ) {
+                setLeadConfirmOpen(true);
+              }
+            }}
             className={inputClass}
           />
           <p className="mt-1 text-xs text-white/40">
@@ -408,7 +473,11 @@ export function PostForm({
             <input
               type="checkbox"
               checked={values.reminderMinutes !== null}
-              disabled={values.leadMinutes < 2}
+              // Only block ENABLING — unchecking is always allowed so a user
+              // who lowers leadMinutes after enabling can still turn it off.
+              disabled={
+                values.reminderMinutes === null && values.leadMinutes < 2
+              }
               onChange={(e) => {
                 if (e.target.checked) {
                   // Default to 5 min, or half of leadMinutes if smaller (so it
@@ -528,13 +597,12 @@ export function PostForm({
       )}
 
       <div className="flex justify-end gap-3">
-        <button
-          type="button"
-          onClick={() => router.push(`/dashboard/${guildId}/posts`)}
+        <Link
+          href={`/dashboard/${guildId}/posts`}
           className="rounded-lg px-4 py-2 text-sm text-white/70 hover:bg-white/5"
         >
           Cancel
-        </button>
+        </Link>
         <button
           type="button"
           onClick={() => void save("stay")}
@@ -567,6 +635,35 @@ export function PostForm({
           {toast.message}
         </div>
       )}
+
+      <ConfirmDialog
+        open={leadConfirmOpen}
+        title="Disable the reminder?"
+        description={
+          <>
+            A lead time of {values.leadMinutes} min can&apos;t fit the current
+            reminder ({values.reminderMinutes} min before the meeting), since
+            the reminder must fire <em>between</em> the post and the meeting.
+            {values.reminderContent.trim().length > 0 && (
+              <>
+                {" "}
+                Continuing will also clear the custom reminder text on this post.
+              </>
+            )}
+          </>
+        }
+        confirmLabel="Disable reminder"
+        destructive
+        onCancel={() => {
+          set("leadMinutes", leadOnFocusRef.current);
+          setLeadConfirmOpen(false);
+        }}
+        onConfirm={() => {
+          set("reminderMinutes", null);
+          set("reminderContent", "");
+          setLeadConfirmOpen(false);
+        }}
+      />
     </form>
   );
 }

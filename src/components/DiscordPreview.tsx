@@ -10,6 +10,7 @@
 // not pixel-perfect rendering.
 
 import React from "react";
+import { substituteAnsiColorTokens } from "@/lib/ansi-tokens";
 
 type Role = { id: string; name: string };
 type Channel = { id: string; name: string };
@@ -137,6 +138,19 @@ function substitutePlaceholders(
   text = text.replace(/\{meetingTime(?::([tTdDfFR]))?\}/g, (_m, fmt) => {
     return `<t:${unix}:${fmt ?? "t"}>`;
   });
+  // {red}/{bold}/etc. → real ESC bytes. Mirror the scheduler so the preview
+  // shows real colors for any ```ansi``` block the user writes.
+  text = substituteAnsiColorTokens(text);
+  // #channel-name → <#id>, matching the scheduler's pre-send rewrite. Unknown
+  // names are left as-is so typos don't render as broken-looking links.
+  const channelsByName = new Map(channels.map((c) => [c.name.toLowerCase(), c.id]));
+  text = text.replace(
+    /(?<![A-Za-z0-9])#([A-Za-z0-9][A-Za-z0-9_-]{0,99})/g,
+    (m, name: string) => {
+      const id = channelsByName.get(name.toLowerCase());
+      return id ? `<#${id}>` : m;
+    }
+  );
   // role mention -> @name (preview only)
   text = text.replace(/<@&(\d{17,21})>/g, (_m, id) => {
     const role = roles.find((r) => r.id === id);
@@ -161,6 +175,7 @@ function renderDiscordMarkdown(
   const lines = text.split("\n");
   const blocks: React.ReactNode[] = [];
   let listBuffer: React.ReactNode[] = [];
+  let ansiBuffer: string[] | null = null;
 
   const flushList = () => {
     if (listBuffer.length > 0) {
@@ -174,8 +189,29 @@ function renderDiscordMarkdown(
       listBuffer = [];
     }
   };
+  const flushAnsi = () => {
+    if (ansiBuffer !== null) {
+      blocks.push(renderAnsiBlock(ansiBuffer.join("\n"), blocks.length));
+      ansiBuffer = null;
+    }
+  };
 
   lines.forEach((line, lineIdx) => {
+    // Inside an open ```ansi block: collect until the closing fence.
+    if (ansiBuffer !== null) {
+      if (line.trim() === "```") {
+        flushAnsi();
+      } else {
+        ansiBuffer.push(line);
+      }
+      return;
+    }
+    // Opening ```ansi fence.
+    if (line.trim() === "```ansi") {
+      flushList();
+      ansiBuffer = [];
+      return;
+    }
     const listMatch = line.match(/^\s*[-*]\s+(.*)$/);
     if (listMatch) {
       listBuffer.push(renderInline(listMatch[1], `l-${lineIdx}`));
@@ -187,6 +223,8 @@ function renderDiscordMarkdown(
     }
   });
   flushList();
+  // Unterminated ```ansi block still renders — better than swallowing the text.
+  flushAnsi();
 
   return <>{blocks}</>;
 }
@@ -400,4 +438,77 @@ function renderTimestamp(unixSec: number, format: string): string {
     default:
       return date.toLocaleString();
   }
+}
+
+// Discord's documented ANSI palette → approximate dark-theme hex values for
+// the preview. Not pixel-exact to Discord's renderer but close enough for the
+// purpose: see roughly what members will see before publishing.
+const ANSI_FG: Record<string, string> = {
+  "30": "#80868b", // gray
+  "31": "#f04747", // red
+  "32": "#43b581", // green
+  "33": "#faa61a", // yellow
+  "34": "#7289da", // blue
+  "35": "#f47fff", // pink
+  "36": "#00bcd4", // cyan
+  "37": "#ffffff", // white
+};
+
+// Render a ```ansi``` block: walk the text, accumulating runs of characters
+// styled by whatever ESC [...m sequence was last seen. `[0m` resets.
+function renderAnsiBlock(text: string, key: number): React.ReactNode {
+  const parts: React.ReactNode[] = [];
+  let style: React.CSSProperties = {};
+  let buffer = "";
+  let partIdx = 0;
+
+  const flush = () => {
+    if (buffer) {
+      parts.push(
+        <span
+          key={partIdx++}
+          style={Object.keys(style).length ? style : undefined}
+        >
+          {buffer}
+        </span>
+      );
+      buffer = "";
+    }
+  };
+
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "" && text[i + 1] === "[") {
+      flush();
+      let j = i + 2;
+      while (j < text.length && text[j] !== "m") j++;
+      const codes = text
+        .slice(i + 2, j)
+        .split(";")
+        .filter(Boolean);
+      for (const code of codes) {
+        if (code === "0") {
+          style = {};
+        } else if (code === "1") {
+          style = { ...style, fontWeight: "bold" };
+        } else if (code === "4") {
+          style = { ...style, textDecoration: "underline" };
+        } else if (ANSI_FG[code]) {
+          style = { ...style, color: ANSI_FG[code] };
+        }
+      }
+      i = j; // skip past the 'm'
+      continue;
+    }
+    buffer += text[i];
+  }
+  flush();
+
+  return (
+    <pre
+      key={key}
+      className="my-1 whitespace-pre-wrap break-words rounded-md bg-[#1e1f22] p-2 font-mono text-[13px] leading-snug"
+    >
+      {parts}
+    </pre>
+  );
 }
