@@ -305,6 +305,64 @@ export async function listMessages(
   return collected.reverse();
 }
 
+// Discord snowflakes embed a timestamp; converting a Date to the snowflake
+// floor lets us use `before=` cursors as time bounds without fetching pages
+// we'd discard anyway.
+const DISCORD_EPOCH = 1420070400000n;
+export function snowflakeForDate(d: Date): string {
+  return String((BigInt(d.getTime()) - DISCORD_EPOCH) << 22n);
+}
+
+// Scan a channel newest→oldest, keeping only messages by `authorId` within
+// [since, until]. Stops paging once messages get older than `since` (or the
+// scan cap is hit). Returns matches in chronological order plus how many
+// messages were scanned in total — the caller surfaces that so a capped scan
+// is visible rather than silently incomplete.
+export async function scanMessagesByAuthor(
+  channelId: string,
+  authorId: string,
+  options: { since?: Date | null; until?: Date | null; scanLimit?: number } = {}
+): Promise<{ matches: DiscordMessageRaw[]; scanned: number; hitCap: boolean }> {
+  const scanLimit = options.scanLimit ?? 20000;
+  const sinceMs = options.since?.getTime() ?? null;
+  const matches: DiscordMessageRaw[] = [];
+  let scanned = 0;
+  // Start the cursor at `until` when provided so we skip newer pages entirely.
+  let before: string | undefined = options.until
+    ? snowflakeForDate(options.until)
+    : undefined;
+
+  while (scanned < scanLimit) {
+    const params = new URLSearchParams({ limit: "100" });
+    if (before) params.set("before", before);
+    const res = await discordFetch(
+      `${BASE}/channels/${channelId}/messages?${params.toString()}`,
+      { headers: headers() }
+    );
+    if (!res.ok) {
+      throw new Error(`discord scanMessages ${res.status}: ${await res.text()}`);
+    }
+    const batch = (await res.json()) as DiscordMessageRaw[];
+    if (batch.length === 0) break;
+
+    let pastSince = false;
+    for (const m of batch) {
+      const ts = new Date(m.timestamp).getTime();
+      if (sinceMs !== null && ts < sinceMs) {
+        pastSince = true;
+        break;
+      }
+      scanned++;
+      if (m.author.id === authorId) matches.push(m);
+    }
+    if (pastSince) break;
+    before = batch[batch.length - 1].id;
+    if (batch.length < 100) break; // last page
+  }
+
+  return { matches: matches.reverse(), scanned, hitCap: scanned >= scanLimit };
+}
+
 // Lists members in a guild, paginated. Each page is up to 1000 members; we
 // stop once a short page comes back. Used by the dashboard to count how many
 // people hold each milestone role.

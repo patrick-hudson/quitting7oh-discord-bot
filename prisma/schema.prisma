@@ -212,6 +212,46 @@ model PostReminder {
   @@index([postId])
 }
 
+// A background request to export one user's messages as a Markdown zip. The
+// portal creates rows (status=pending); the bot worker picks them up, scans
+// the selected channels via Discord's REST API filtering to the target
+// author, and stores the finished zip in `output`. Postgres bytea is fine at
+// this scale (a heavy user's markdown compresses to low MBs) and saves us a
+// shared volume between the web and bot containers. Rows are pruned by the
+// worker after `PRUNE_AFTER_DAYS` so blobs don't accumulate forever.
+model UserExportJob {
+  id      String @id @default(cuid())
+  guildId String
+
+  // Who to export and what slice.
+  targetUserId String // Discord snowflake of the member being exported
+  sinceAt      DateTime? // null = from the beginning
+  untilAt      DateTime? // null = up to now
+  channelIds   String[] // empty = all text channels visible to the bot
+
+  // pending → running → done | failed
+  status      String    @default("pending")
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  error       String?   @db.Text
+  // Summary counts for the jobs list: how many messages matched, how many
+  // were scanned, per-channel breakdown lives in the zip's index.md.
+  matchedCount Int @default(0)
+  scannedCount Int @default(0)
+
+  // The finished zip. null until done.
+  output   Bytes?
+  fileName String?
+
+  // Discord user id of the admin who requested it — gets a best-effort DM
+  // with the download link when the job finishes.
+  requestedBy String
+  createdAt   DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@index([guildId, createdAt])
+}
+
 // --- Auth.js (NextAuth v5) tables ---
 // Standard Prisma adapter schema; lets users sign in via Discord OAuth.
 
