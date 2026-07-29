@@ -10,6 +10,7 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChannelPicker } from "./ChannelPicker";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CronHint } from "@/components/CronHint";
 
 type Channel = { id: string; name: string; parent_id: string | null };
 type Role = { id: string; name: string; color: number };
@@ -245,6 +246,7 @@ export function PostsAdvancedForm({
                       placeholder="0 19 * * 0"
                       className={`${inputCls} font-mono`}
                     />
+                    <CronHint expr={p.cron} />
                     <input
                       value={p.timezone}
                       onChange={(e) => update(p.id, { timezone: e.target.value })}

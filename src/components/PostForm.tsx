@@ -7,6 +7,7 @@ import { ChannelPicker } from "./ChannelPicker";
 import { DiscordPreview } from "./DiscordPreview";
 import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
+import { CronHint } from "@/components/CronHint";
 
 type Channel = { id: string; name: string; parent_id: string | null };
 type Role = { id: string; name: string; color: number };
@@ -46,10 +47,14 @@ export function PostForm({
   guildId,
   initial,
   guildTimezone,
+  initiallyDirty = false,
 }: {
   guildId: string;
   initial?: Partial<PostFormValues>;
   guildTimezone: string;
+  // True when `initial` is an imported starter (not a saved post) — the form
+  // counts as dirty from the start so it can be saved without further edits.
+  initiallyDirty?: boolean;
 }) {
   const router = useRouter();
   const [values, setValues] = useState<PostFormValues>({
@@ -111,7 +116,7 @@ export function PostForm({
       ta.setSelectionRange(innerStart, innerEnd);
     });
   }
-  const [isDirty, setIsDirty] = useState(false);
+  const [isDirty, setIsDirty] = useState(initiallyDirty);
   const [toast, setToast] = useState<{
     message: string;
     id: number;
@@ -276,13 +281,14 @@ export function PostForm({
 
         {values.scheduleKind === "cron" ? (
           <>
-            <Field label="Cron expression" hint="minute hour day-of-month month day-of-week">
+            <Field label="Cron expression">
               <input
                 value={values.cron}
                 onChange={(e) => set("cron", e.target.value)}
                 placeholder="0 19 * * 0"
                 className={`${inputClass} font-mono`}
               />
+              <CronHint expr={values.cron} showLegend />
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {CRON_PRESETS.map((p) => (
                   <button
