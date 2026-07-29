@@ -38,6 +38,17 @@ model Guild {
   // milestone congrats roster: random, avoiding the last index used per post.
   reminderTemplates String[] @default([])
 
+  // Member-departure announcements. When enabled, the bot posts a message to
+  // leaveChannelId whenever someone leaves the server (fires for voluntary
+  // leaves, kicks, and bans alike — Discord's GuildMemberRemove doesn't
+  // distinguish without audit-log lookups). Templates support {user} and
+  // {count}; empty roster = baked-in defaults in src/lib/leave-templates.ts.
+  leaveEnabled   Boolean  @default(false)
+  leaveChannelId String?
+  leaveTemplates String[] @default([])
+  // Anti-repeat index for the roster picker, mirroring lastReminderIndex.
+  lastLeaveIndex Int?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

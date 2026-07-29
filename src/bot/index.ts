@@ -6,13 +6,14 @@
 //      message, then compute the next nextFireAt (or deactivate if one-off).
 //   3. Lazy-upsert Guild rows when the bot joins a new guild.
 
-import { Client, Events, GatewayIntentBits, type Message } from "discord.js";
+import { Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
 import { prisma } from "@/lib/db";
 import { iconUrl } from "@/lib/discord-rest";
 import { runScheduler } from "./scheduler";
 import { runRedditPoller } from "./reddit-poller";
 import { runUserExportWorker } from "./user-export-worker";
 import { registerMilestoneHandler } from "./milestones";
+import { registerLeaveAnnouncer } from "./leave-announcer";
 
 async function main() {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -27,9 +28,14 @@ async function main() {
       // off, so we never see message text.
       GatewayIntentBits.GuildMessages,
     ],
+    // Without the GuildMember partial, discord.js silently drops
+    // GuildMemberRemove for members that weren't cached — which is most of
+    // them, since we never chunk the member list.
+    partials: [Partials.GuildMember],
   });
 
   registerMilestoneHandler(client);
+  registerLeaveAnnouncer(client);
 
   // Activity logging — one row per observed message. Fire-and-forget so a
   // slow DB never delays the event loop. We deliberately skip threads and

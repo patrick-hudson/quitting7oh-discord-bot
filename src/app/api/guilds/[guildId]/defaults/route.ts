@@ -9,11 +9,15 @@ import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 
+const templateRoster = z.array(z.string().min(1).max(2000)).max(20).default([]);
+
 const defaultsSchema = z.object({
   // Mirrors the milestone congratsTemplates shape: up to 20 entries, each
   // capped at 2000 chars (Discord's message limit). Empty array = use the
   // bot's baked-in defaults (src/lib/reminder-templates.ts).
-  reminderTemplates: z.array(z.string().min(1).max(2000)).max(20).default([]),
+  reminderTemplates: templateRoster,
+  // Departure-announcement roster; empty = src/lib/leave-templates.ts.
+  leaveTemplates: templateRoster,
 });
 
 export const PATCH = withErrors(async (
@@ -26,7 +30,10 @@ export const PATCH = withErrors(async (
   const input = defaultsSchema.parse(await req.json());
   const guild = await prisma.guild.update({
     where: { id: guildId },
-    data: { reminderTemplates: input.reminderTemplates },
+    data: {
+      reminderTemplates: input.reminderTemplates,
+      leaveTemplates: input.leaveTemplates,
+    },
   });
 
   return NextResponse.json({ guild });

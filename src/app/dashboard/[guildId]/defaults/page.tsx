@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { DefaultsForm } from "@/components/DefaultsForm";
 import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
+import { LEAVE_TEMPLATES } from "@/lib/leave-templates";
 
 export default async function DefaultsPage({
   params,
@@ -30,6 +31,8 @@ export default async function DefaultsPage({
           guildId={guildId}
           initialReminderTemplates={guild.reminderTemplates}
           builtInReminderTemplates={REMINDER_TEMPLATES}
+          initialLeaveTemplates={guild.leaveTemplates}
+          builtInLeaveTemplates={LEAVE_TEMPLATES}
         />
       </div>
     </div>

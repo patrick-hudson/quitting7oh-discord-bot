@@ -18,6 +18,8 @@ const settingsSchema = z.object({
     .nullable()
     .or(z.literal("").transform(() => null)),
   redditChannelId: z.union([z.string().regex(/^\d{17,21}$/), z.literal(""), z.null()]),
+  leaveEnabled: z.boolean(),
+  leaveChannelId: z.union([z.string().regex(/^\d{17,21}$/), z.literal(""), z.null()]),
 });
 
 export const PATCH = withErrors(async (
@@ -38,6 +40,14 @@ export const PATCH = withErrors(async (
     );
   }
 
+  const leaveChannelId = input.leaveChannelId || null;
+  if (input.leaveEnabled && !leaveChannelId) {
+    return NextResponse.json(
+      { error: "Pick a channel to enable departure announcements." },
+      { status: 400 }
+    );
+  }
+
   // If the watched subreddit changes, reset the high-water mark so the new sub
   // re-seeds its baseline (and doesn't replay old posts against a stale mark).
   const existing = await prisma.guild.findUnique({
@@ -54,6 +64,8 @@ export const PATCH = withErrors(async (
       redditEnabled: input.redditEnabled,
       redditSubreddit: subreddit,
       redditChannelId,
+      leaveEnabled: input.leaveEnabled,
+      leaveChannelId,
       ...(subredditChanged ? { redditLastPostAt: null } : {}),
     },
   });
