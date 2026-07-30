@@ -15,6 +15,7 @@ import {
 } from "discord.js";
 import { prisma } from "@/lib/db";
 import { LEAVE_TEMPLATES } from "@/lib/leave-templates";
+import { audit } from "@/lib/audit";
 
 // Pick a random entry, avoiding the index used last time. Same shape as the
 // reminder/milestone roster pickers.
@@ -78,6 +79,17 @@ export function registerLeaveAnnouncer(client: Client) {
           return;
         }
         await channel.send({ content });
+        audit(
+          member.guild.id,
+          "leave.announced",
+          `Announced departure of ${name}`,
+          {
+            userId: member.id,
+            userName: name,
+            channelId: config.leaveChannelId,
+            memberCountAfter: count,
+          }
+        );
 
         await prisma.guild
           .update({
@@ -89,6 +101,13 @@ export function registerLeaveAnnouncer(client: Client) {
           );
       } catch (err) {
         console.error(`[leave] failed for guild ${member.guild.id}:`, err);
+        audit(
+          member.guild.id,
+          "leave.announce_failed",
+          `Failed to announce departure of ${member.user?.username ?? member.id}`,
+          { userId: member.id, error: (err as Error).message?.slice(0, 500) },
+          "error"
+        );
       }
     }
   );

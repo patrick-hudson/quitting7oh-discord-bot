@@ -19,6 +19,7 @@ import {
   LogOut,
   MessageSquareText,
   Plus,
+  ScrollText,
   Settings,
 } from "lucide-react";
 
@@ -72,6 +73,7 @@ export function AppSidebar({
     { href: `${base}/milestones`, label: "Milestones", icon: Award },
     { href: `${base}/milestones/advanced`, label: "Bulk-edit templates", icon: Layers },
     { href: `${base}/export`, label: "Export", icon: Download },
+    { href: `${base}/audit`, label: "Audit log", icon: ScrollText },
     { href: `${base}/defaults`, label: "Defaults", icon: MessageSquareText },
     { href: `${base}/settings`, label: "Settings", icon: Settings },
   ];

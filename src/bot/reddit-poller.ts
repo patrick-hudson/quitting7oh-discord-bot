@@ -11,6 +11,7 @@ import { Client, EmbedBuilder } from "discord.js";
 import { prisma } from "@/lib/db";
 import { env } from "@/lib/env";
 import { fetchNewPosts, type RedditPost } from "@/lib/reddit";
+import { audit } from "@/lib/audit";
 
 const REDDIT_ORANGE = 0xff4500;
 
@@ -59,6 +60,10 @@ async function tick(client: Client) {
           data: { redditLastPostAt: newest.createdAt },
         });
         console.log(`[reddit] seeded baseline for r/${subreddit} (${g.name})`);
+        audit(g.id, "reddit.baseline_seeded", `Seeded r/${subreddit} baseline — no backlog announced`, {
+          subreddit,
+          baselineAt: newest.createdAt.toISOString(),
+        });
         continue;
       }
 
@@ -83,8 +88,30 @@ async function tick(client: Client) {
       console.log(
         `[reddit] announced ${fresh.length} new post(s) from r/${subreddit} (${g.name})`
       );
+      audit(
+        g.id,
+        "reddit.announced",
+        `Announced ${fresh.length} new r/${subreddit} post(s)`,
+        {
+          subreddit,
+          channelId,
+          posts: fresh.map((p) => ({
+            id: p.id,
+            title: p.title.slice(0, 200),
+            author: p.author,
+            permalink: p.permalink,
+          })),
+        }
+      );
     } catch (err) {
       console.error(`[reddit] failed for r/${subreddit} (${g.name}):`, err);
+      audit(
+        g.id,
+        "reddit.poll_failed",
+        `Poll of r/${subreddit} failed — will retry next tick`,
+        { subreddit, channelId, error: (err as Error).message?.slice(0, 500) },
+        "error"
+      );
       // Leave the mark untouched so the next tick retries from where we were.
     }
   }

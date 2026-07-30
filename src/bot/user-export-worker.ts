@@ -18,6 +18,7 @@ import {
   scanMessagesByAuthor,
 } from "@/lib/discord-rest";
 import type { UserExportJob } from "@prisma/client";
+import { audit } from "@/lib/audit";
 
 const POLL_MS = 15_000;
 // Delete finished/failed jobs (and their zip blobs) after a week.
@@ -93,10 +94,38 @@ async function tick(client: Client) {
     console.log(
       `[user-export] job ${job.id}: done — ${result.matched} message(s) from ${result.scanned} scanned`
     );
+    audit(
+      job.guildId,
+      "export.completed",
+      `User export for ${job.targetUserId} finished — ${result.matched} message(s) from ${result.scanned} scanned`,
+      {
+        jobId: job.id,
+        targetUserId: job.targetUserId,
+        requestedBy: job.requestedBy,
+        matched: result.matched,
+        scanned: result.scanned,
+        sinceAt: job.sinceAt?.toISOString() ?? null,
+        untilAt: job.untilAt?.toISOString() ?? null,
+        channelFilter: job.channelIds,
+        fileName: result.fileName,
+      }
+    );
     await notifyRequester(client, job, result.matched);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[user-export] job ${job.id} failed:`, err);
+    audit(
+      job.guildId,
+      "export.failed",
+      `User export for ${job.targetUserId} failed`,
+      {
+        jobId: job.id,
+        targetUserId: job.targetUserId,
+        requestedBy: job.requestedBy,
+        error: message.slice(0, 500),
+      },
+      "error"
+    );
     await prisma.userExportJob.update({
       where: { id: job.id },
       data: {

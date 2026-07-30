@@ -16,6 +16,7 @@ import {
 } from "discord.js";
 import { prisma } from "@/lib/db";
 import { WELCOME_TEMPLATES } from "@/lib/welcome-templates";
+import { audit } from "@/lib/audit";
 
 // Same anti-repeat roster picker as the leave/reminder features.
 function pickTemplate(
@@ -94,10 +95,23 @@ async function sendWelcome(member: GuildMember) {
         console.log(
           `[welcome] ${member.user.tag} (${member.id}) has DMs closed — skipped`
         );
+        audit(
+          member.guild.id,
+          "welcome.dm_skipped",
+          `Welcome DM to ${name} skipped — DMs closed or bot blocked`,
+          { userId: member.id, userName: name },
+          "warn"
+        );
         return;
       }
       throw err;
     }
+    audit(member.guild.id, "welcome.dm_sent", `Welcome DM sent to ${name}`, {
+      userId: member.id,
+      userName: name,
+      templateIndex: pick.index,
+      customRoster: config.welcomeDmTemplates.length > 0,
+    });
 
     await prisma.guild
       .update({
@@ -110,5 +124,12 @@ async function sendWelcome(member: GuildMember) {
     console.log(`[welcome] DMed ${member.user.tag} (${member.guild.name})`);
   } catch (err) {
     console.error(`[welcome] failed for guild ${member.guild.id}:`, err);
+    audit(
+      member.guild.id,
+      "welcome.dm_failed",
+      `Welcome DM to ${member.user.username} failed`,
+      { userId: member.id, error: (err as Error).message?.slice(0, 500) },
+      "error"
+    );
   }
 }

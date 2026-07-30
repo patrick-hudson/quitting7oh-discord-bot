@@ -271,6 +271,30 @@ model UserExportJob {
   @@index([guildId, createdAt])
 }
 
+// One row per action the bot takes — scheduled/manual post fires, reminders,
+// Reddit announcements, welcome DMs, departure posts, milestone claims, export
+// jobs. Written fire-and-forget via src/lib/audit.ts (logging must never break
+// the action). Powers the portal's Audit page. Pruned after 90 days by the
+// scheduler.
+model BotAuditLog {
+  id      String @id @default(cuid())
+  guildId String
+  // Dotted category.action, e.g. "post.fired", "welcome.dm_skipped",
+  // "milestone.claimed". The portal filters on the prefix before the dot.
+  kind    String
+  // ok | warn | error — drives the status badge in the portal.
+  status  String @default("ok")
+  // Human-readable one-liner, e.g. `Fired "Friday KA" to 2/2 channels`.
+  summary String @db.Text
+  // Rich structured details: ids, channels, message ids, counts, errors.
+  data    Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([guildId, createdAt])
+  @@index([guildId, kind, createdAt])
+}
+
 // --- Auth.js (NextAuth v5) tables ---
 // Standard Prisma adapter schema; lets users sign in via Discord OAuth.
 

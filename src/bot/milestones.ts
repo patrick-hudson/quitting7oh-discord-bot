@@ -4,6 +4,7 @@
 
 import { Events, MessageFlags, type Client, type Interaction } from "discord.js";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 
 const CUSTOM_ID_PREFIX = "milestone:";
 
@@ -87,6 +88,19 @@ export function registerMilestoneHandler(client: Client) {
         await member.roles.remove(roleId, "Milestone role swap");
       }
       await member.roles.add(tier.roleId, "Milestone role claim");
+      audit(
+        tier.guildId,
+        "milestone.claimed",
+        `${member.user.globalName || member.user.username} claimed "${tier.label}"`,
+        {
+          userId: member.id,
+          userName: member.user.globalName || member.user.username,
+          tierId: tier.id,
+          tierLabel: tier.label,
+          roleAdded: tier.roleId,
+          rolesRemoved: heldOtherRoles,
+        }
+      );
 
       const config = await prisma.milestoneConfig.findUnique({
         where: { guildId: tier.guildId },
@@ -144,9 +158,33 @@ export function registerMilestoneHandler(client: Client) {
               content: text,
               allowedMentions: { users: [interaction.user.id] },
             });
+            audit(
+              tier.guildId,
+              "milestone.congrats_posted",
+              `Congrats for "${tier.label}" posted for ${member.user.globalName || member.user.username}`,
+              {
+                userId: member.id,
+                tierId: tier.id,
+                tierLabel: tier.label,
+                channelId: config.congratsChannelId,
+                usedTierRoster: Boolean(tierPick),
+              }
+            );
           }
         } catch (err) {
           console.warn("[milestones] congrats send failed:", err);
+          audit(
+            tier.guildId,
+            "milestone.congrats_failed",
+            `Congrats post for "${tier.label}" failed`,
+            {
+              userId: member.id,
+              tierId: tier.id,
+              channelId: config.congratsChannelId,
+              error: (err as Error).message?.slice(0, 500),
+            },
+            "warn"
+          );
         }
       }
 

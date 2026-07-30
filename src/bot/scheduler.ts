@@ -17,6 +17,7 @@ import { env } from "@/lib/env";
 import { computeNextFireAt } from "@/lib/cron";
 import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
 import { substituteAnsiColorTokens } from "@/lib/ansi-tokens";
+import { audit } from "@/lib/audit";
 import type { PostReminder, ScheduledPost } from "@prisma/client";
 
 // Pick a random reminder template, avoiding the index used last time for this
@@ -58,6 +59,26 @@ async function tick(client: Client) {
   await fireDuePosts(client);
   await fireManualRequests(client);
   await fireDueReminders(client);
+  await pruneAuditLog();
+}
+
+// Keep 90 days of audit rows; check at most every 6 hours so the delete isn't
+// on every tick's hot path.
+const AUDIT_RETENTION_DAYS = 90;
+let lastAuditPrune = 0;
+async function pruneAuditLog() {
+  if (Date.now() - lastAuditPrune < 6 * 60 * 60_000) return;
+  lastAuditPrune = Date.now();
+  const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60_000);
+  const res = await prisma.botAuditLog
+    .deleteMany({ where: { createdAt: { lt: cutoff } } })
+    .catch((err) => {
+      console.warn("[scheduler] audit prune failed:", err);
+      return null;
+    });
+  if (res && res.count > 0) {
+    console.log(`[scheduler] pruned ${res.count} audit row(s) older than ${AUDIT_RETENTION_DAYS}d`);
+  }
 }
 
 async function fireDuePosts(client: Client) {
@@ -73,6 +94,20 @@ async function fireDuePosts(client: Client) {
     try {
       const sent = await sendPost(client, post);
       await advancePost(post, post.guild.timezone);
+      audit(
+        post.guildId,
+        "post.fired",
+        `Fired "${post.name}" to ${sent.messages.length}/${post.channelIds.length} channel(s)`,
+        {
+          postId: post.id,
+          postName: post.name,
+          cron: post.cron,
+          meetingAt: sent.meetingAt.toISOString(),
+          messages: sent.messages,
+          failures: sent.failures,
+        },
+        sent.failures.length > 0 ? "warn" : "ok"
+      );
       await maybeScheduleReminder(post, sent);
     } catch (err) {
       console.error(`[scheduler] failed to send post ${post.id}:`, err);
@@ -81,6 +116,13 @@ async function fireDuePosts(client: Client) {
       // it instead of relying on log spelunking.
       const retryAt = new Date(Date.now() + 60_000);
       const message = err instanceof Error ? err.message : String(err);
+      audit(
+        post.guildId,
+        "post.fire_failed",
+        `Failed to fire "${post.name}" — retrying in 60s`,
+        { postId: post.id, postName: post.name, channelIds: post.channelIds, error: message.slice(0, 500) },
+        "error"
+      );
       await prisma.scheduledPost.update({
         where: { id: post.id },
         data: {
@@ -113,11 +155,30 @@ async function fireManualRequests(client: Client) {
         where: { id: post.id },
         data: { manualFireRequested: false, lastFiredAt: new Date() },
       });
+      audit(
+        post.guildId,
+        "post.manual_fired",
+        `Manually fired "${post.name}" to ${sent.messages.length}/${post.channelIds.length} channel(s)`,
+        {
+          postId: post.id,
+          postName: post.name,
+          messages: sent.messages,
+          failures: sent.failures,
+        },
+        sent.failures.length > 0 ? "warn" : "ok"
+      );
       await maybeScheduleReminder(post, sent);
       console.log(`[scheduler] manual fire delivered "${post.name}"`);
     } catch (err) {
       console.error(`[scheduler] manual fire failed for ${post.id}:`, err);
       const message = err instanceof Error ? err.message : String(err);
+      audit(
+        post.guildId,
+        "post.manual_fire_failed",
+        `Manual fire of "${post.name}" failed`,
+        { postId: post.id, postName: post.name, channelIds: post.channelIds, error: message.slice(0, 500) },
+        "error"
+      );
       // Clear the flag either way — leaving it true would have us retry every
       // tick on a permanently broken post. The admin can click again to retry.
       await prisma.scheduledPost.update({
@@ -199,12 +260,39 @@ async function fireDueReminders(client: Client) {
         where: { id: reminder.id },
         data: { sentAt: new Date() },
       });
+      audit(
+        reminder.post.guildId,
+        "reminder.sent",
+        `Sent follow-up reminder to ${reminder.channelIds.length} channel(s)`,
+        {
+          reminderId: reminder.id,
+          postId: reminder.postId,
+          meetingAt: reminder.meetingAt.toISOString(),
+          channelIds: reminder.channelIds,
+          repliedToMessageIds: reminder.messageIds,
+        }
+      );
     } catch (err) {
       console.error(`[scheduler] failed to send reminder ${reminder.id}:`, err);
       const message = err instanceof Error ? err.message : String(err);
       // Don't bump remindAt — the next tick retries. But if the meeting time is
       // already well past, give up so we don't reply "starting soon" hours late.
       const giveUp = reminder.meetingAt.getTime() < Date.now() - 60 * 60_000;
+      audit(
+        reminder.post.guildId,
+        giveUp ? "reminder.abandoned" : "reminder.failed",
+        giveUp
+          ? `Abandoned reminder ${reminder.id} — meeting over an hour past`
+          : `Reminder ${reminder.id} failed — will retry next tick`,
+        {
+          reminderId: reminder.id,
+          postId: reminder.postId,
+          meetingAt: reminder.meetingAt.toISOString(),
+          channelIds: reminder.channelIds,
+          error: message.slice(0, 500),
+        },
+        "error"
+      );
       await prisma.postReminder.update({
         where: { id: reminder.id },
         data: {
@@ -320,6 +408,7 @@ async function sendPost(
 ): Promise<{
   meetingAt: Date;
   messages: Array<{ channelId: string; messageId: string }>;
+  failures: string[];
 }> {
   const mention = post.mentionRoleId ? `<@&${post.mentionRoleId}>` : "";
   const allowedMentions = post.mentionRoleId
@@ -402,7 +491,7 @@ async function sendPost(
     `[scheduler] sent "${post.name}" to ${messages.length}/${post.channelIds.length} channels`
   );
 
-  return { meetingAt: meetingTime, messages };
+  return { meetingAt: meetingTime, messages, failures };
 }
 
 async function advancePost(post: ScheduledPost, guildTimezone: string) {
