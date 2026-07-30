@@ -295,6 +295,40 @@ model BotAuditLog {
   @@index([guildId, kind, createdAt])
 }
 
+// One row per moderation action observed in the guild — bans, unbans, kicks,
+// timeouts (from Discord's real-time audit-log gateway event) and message
+// deletions (with cached content when available). Distinct from BotAuditLog:
+// these are actions BY humans, surfaced for mod accountability. Pruned after
+// 90 days by the scheduler.
+model ModerationLog {
+  id      String @id @default(cuid())
+  guildId String
+  // ban | unban | kick | timeout | timeout_removed | message_delete |
+  // message_bulk_delete
+  kind    String
+
+  // Who did it (null when unattributable, e.g. a member deleting their own
+  // message leaves no audit entry) and who it happened to.
+  executorId   String?
+  executorName String?
+  targetId     String?
+  targetName   String?
+
+  reason    String? @db.Text
+  channelId String? // message deletions
+  // Deleted message text, when the message was still in the bot's cache.
+  // null = content unavailable (sent before the bot's current process, or
+  // swept from cache).
+  content   String? @db.Text
+  // Extras: attachment URLs, timeout-until, audit attribution mode, counts.
+  data      Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([guildId, createdAt])
+  @@index([guildId, kind, createdAt])
+}
+
 // --- Auth.js (NextAuth v5) tables ---
 // Standard Prisma adapter schema; lets users sign in via Discord OAuth.
 

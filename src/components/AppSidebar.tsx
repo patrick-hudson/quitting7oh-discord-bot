@@ -21,6 +21,7 @@ import {
   Plus,
   ScrollText,
   Settings,
+  Shield,
 } from "lucide-react";
 
 import {
@@ -74,6 +75,7 @@ export function AppSidebar({
     { href: `${base}/milestones/advanced`, label: "Bulk-edit templates", icon: Layers },
     { href: `${base}/export`, label: "Export", icon: Download },
     { href: `${base}/audit`, label: "Audit log", icon: ScrollText },
+    { href: `${base}/mod-log`, label: "Mod log", icon: Shield },
     { href: `${base}/defaults`, label: "Defaults", icon: MessageSquareText },
     { href: `${base}/settings`, label: "Settings", icon: Settings },
   ];

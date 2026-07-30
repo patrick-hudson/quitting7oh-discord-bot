@@ -6,7 +6,14 @@
 //      message, then compute the next nextFireAt (or deactivate if one-off).
 //   3. Lazy-upsert Guild rows when the bot joins a new guild.
 
-import { Client, Events, GatewayIntentBits, Partials, type Message } from "discord.js";
+import {
+  Client,
+  Events,
+  GatewayIntentBits,
+  Options,
+  Partials,
+  type Message,
+} from "discord.js";
 import { prisma } from "@/lib/db";
 import { iconUrl } from "@/lib/discord-rest";
 import { runScheduler } from "./scheduler";
@@ -15,6 +22,7 @@ import { runUserExportWorker } from "./user-export-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
+import { registerModLog } from "./mod-log";
 
 async function main() {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -24,20 +32,40 @@ async function main() {
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMembers,
-      // GuildMessages is NOT a privileged intent — we only need it to count
-      // and timestamp messages for the activity graph. MESSAGE_CONTENT stays
-      // off, so we never see message text.
       GatewayIntentBits.GuildMessages,
+      // GuildModeration (non-privileged) delivers real-time audit-log entries
+      // for the mod log (bans/kicks/timeouts). The bot's role also needs the
+      // View Audit Log permission in the server.
+      GatewayIntentBits.GuildModeration,
+      // MessageContent is a PRIVILEGED intent (dev-portal toggle required).
+      // Enabled deliberately for the mod log so deleted messages can be
+      // recorded with their content. MessageEvent activity logging still
+      // stores counts only — message text is persisted ONLY when a message
+      // is deleted (see src/bot/mod-log.ts).
+      GatewayIntentBits.MessageContent,
     ],
     // Without the GuildMember partial, discord.js silently drops
     // GuildMemberRemove for members that weren't cached — which is most of
-    // them, since we never chunk the member list.
-    partials: [Partials.GuildMember],
+    // them, since we never chunk the member list. The Message partial lets
+    // MessageDelete fire for uncached messages (logged without content).
+    partials: [Partials.GuildMember, Partials.Message],
+    // Cache recent messages so deleted ones can be logged with content.
+    // 200/channel with a 6h sweep bounds memory while covering the window
+    // where deletions actually happen.
+    makeCache: Options.cacheWithLimits({
+      ...Options.DefaultMakeCacheSettings,
+      MessageManager: 200,
+    }),
+    sweepers: {
+      ...Options.DefaultSweeperSettings,
+      messages: { interval: 3600, lifetime: 6 * 3600 },
+    },
   });
 
   registerMilestoneHandler(client);
   registerLeaveAnnouncer(client);
   registerWelcomeDm(client);
+  registerModLog(client);
 
   // Activity logging — one row per observed message. Fire-and-forget so a
   // slow DB never delays the event loop. We deliberately skip threads and

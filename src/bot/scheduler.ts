@@ -62,22 +62,27 @@ async function tick(client: Client) {
   await pruneAuditLog();
 }
 
-// Keep 90 days of audit rows; check at most every 6 hours so the delete isn't
-// on every tick's hot path.
+// Keep 90 days of audit + moderation rows; check at most every 6 hours so the
+// deletes aren't on every tick's hot path.
 const AUDIT_RETENTION_DAYS = 90;
 let lastAuditPrune = 0;
 async function pruneAuditLog() {
   if (Date.now() - lastAuditPrune < 6 * 60 * 60_000) return;
   lastAuditPrune = Date.now();
   const cutoff = new Date(Date.now() - AUDIT_RETENTION_DAYS * 24 * 60 * 60_000);
-  const res = await prisma.botAuditLog
-    .deleteMany({ where: { createdAt: { lt: cutoff } } })
-    .catch((err) => {
-      console.warn("[scheduler] audit prune failed:", err);
+  for (const [label, del] of [
+    ["audit", () => prisma.botAuditLog.deleteMany({ where: { createdAt: { lt: cutoff } } })],
+    ["mod-log", () => prisma.moderationLog.deleteMany({ where: { createdAt: { lt: cutoff } } })],
+  ] as const) {
+    const res = await del().catch((err) => {
+      console.warn(`[scheduler] ${label} prune failed:`, err);
       return null;
     });
-  if (res && res.count > 0) {
-    console.log(`[scheduler] pruned ${res.count} audit row(s) older than ${AUDIT_RETENTION_DAYS}d`);
+    if (res && res.count > 0) {
+      console.log(
+        `[scheduler] pruned ${res.count} ${label} row(s) older than ${AUDIT_RETENTION_DAYS}d`
+      );
+    }
   }
 }
 
