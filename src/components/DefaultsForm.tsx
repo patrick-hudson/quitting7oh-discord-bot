@@ -183,6 +183,10 @@ function RosterSection({
                 {p}
               </code>
             ))}
+            <span className="ml-2">
+              Use <code className="text-white/60">\n</code> for a line break
+              within a message.
+            </span>
           </p>
         </div>
         <span

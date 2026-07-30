@@ -65,7 +65,10 @@ export function registerLeaveAnnouncer(client: Client) {
         const content = pick.template
           .replaceAll("{profile}", profile)
           .replaceAll("{user}", name)
-          .replaceAll("{count}", String(count));
+          .replaceAll("{count}", String(count))
+          // Literal \n in a roster entry becomes a real line break (roster
+          // entries are single lines in the Defaults editor).
+          .replaceAll("\\n", "\n");
 
         const channel = await client.channels.fetch(config.leaveChannelId);
         if (!channel || !channel.isTextBased() || !("send" in channel)) {

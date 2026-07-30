@@ -77,9 +77,12 @@ async function sendWelcome(member: GuildMember) {
         : WELCOME_TEMPLATES;
     const pick = pickTemplate(roster, config.lastWelcomeDmIndex);
     const name = member.user.globalName || member.user.username;
+    // Roster entries are one line each in the Defaults editor; a literal \n
+    // sequence becomes a real line break so multi-line DMs are expressible.
     const content = pick.template
       .replaceAll("{user}", name)
-      .replaceAll("{server}", member.guild.name);
+      .replaceAll("{server}", member.guild.name)
+      .replaceAll("\\n", "\n");
 
     try {
       await member.send({ content });
