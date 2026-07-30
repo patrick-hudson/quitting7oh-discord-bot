@@ -52,11 +52,17 @@ export function registerLeaveAnnouncer(client: Client) {
           member.user?.globalName || member.user?.username || "A member";
         // memberCount reflects the state after the removal.
         const count = member.guild.memberCount;
+        // Masked profile link — bots may use markdown links in plain content,
+        // and discord.com/users/<id> opens the profile in-app. This stays
+        // clickable after the member leaves, unlike a <@id> mention (which
+        // degrades to @unknown-user once they're gone).
+        const profile = `[${name}](https://discord.com/users/${member.id})`;
 
         const roster =
           config.leaveTemplates.length > 0 ? config.leaveTemplates : LEAVE_TEMPLATES;
         const pick = pickTemplate(roster, config.lastLeaveIndex);
         const content = pick.template
+          .replaceAll("{profile}", profile)
           .replaceAll("{user}", name)
           .replaceAll("{count}", String(count));
 

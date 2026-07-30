@@ -88,8 +88,8 @@ export function DefaultsForm({
 
       <RosterSection
         title="Member departure messages"
-        description="One message per line. Posted when someone leaves the server (if enabled in Settings). The bot picks one at random, avoiding the last one used."
-        placeholders={["{user}", "{count}"]}
+        description="One message per line. Posted when someone leaves the server (if enabled in Settings). The bot picks one at random, avoiding the last one used. {profile} renders the name as a clickable link to their Discord profile; {user} is plain text."
+        placeholders={["{profile}", "{user}", "{count}"]}
         value={leaveText}
         onChange={(v) => {
           setLeaveText(v);
