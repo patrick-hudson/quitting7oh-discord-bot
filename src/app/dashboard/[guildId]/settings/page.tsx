@@ -31,6 +31,7 @@ export default async function SettingsPage({
             redditChannelId: guild.redditChannelId ?? "",
             leaveEnabled: guild.leaveEnabled,
             leaveChannelId: guild.leaveChannelId ?? "",
+            welcomeDmEnabled: guild.welcomeDmEnabled,
           }}
           roles={roles.map((r) => ({ id: r.id, name: r.name }))}
           channels={channels.map((c) => ({ id: c.id, name: c.name }))}

@@ -18,6 +18,8 @@ const defaultsSchema = z.object({
   reminderTemplates: templateRoster,
   // Departure-announcement roster; empty = src/lib/leave-templates.ts.
   leaveTemplates: templateRoster,
+  // Welcome-DM roster; empty = src/lib/welcome-templates.ts.
+  welcomeDmTemplates: templateRoster,
 });
 
 export const PATCH = withErrors(async (
@@ -33,6 +35,7 @@ export const PATCH = withErrors(async (
     data: {
       reminderTemplates: input.reminderTemplates,
       leaveTemplates: input.leaveTemplates,
+      welcomeDmTemplates: input.welcomeDmTemplates,
     },
   });
 

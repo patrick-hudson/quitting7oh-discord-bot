@@ -14,6 +14,7 @@ import { runRedditPoller } from "./reddit-poller";
 import { runUserExportWorker } from "./user-export-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
+import { registerWelcomeDm } from "./welcome-dm";
 
 async function main() {
   const token = process.env.DISCORD_BOT_TOKEN;
@@ -36,6 +37,7 @@ async function main() {
 
   registerMilestoneHandler(client);
   registerLeaveAnnouncer(client);
+  registerWelcomeDm(client);
 
   // Activity logging — one row per observed message. Fire-and-forget so a
   // slow DB never delays the event loop. We deliberately skip threads and

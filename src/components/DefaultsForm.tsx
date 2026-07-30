@@ -24,18 +24,25 @@ export function DefaultsForm({
   builtInReminderTemplates,
   initialLeaveTemplates,
   builtInLeaveTemplates,
+  initialWelcomeDmTemplates,
+  builtInWelcomeDmTemplates,
 }: {
   guildId: string;
   initialReminderTemplates: string[];
   builtInReminderTemplates: string[];
   initialLeaveTemplates: string[];
   builtInLeaveTemplates: string[];
+  initialWelcomeDmTemplates: string[];
+  builtInWelcomeDmTemplates: string[];
 }) {
   const router = useRouter();
   const [reminderText, setReminderText] = useState(
     rosterToText(initialReminderTemplates)
   );
   const [leaveText, setLeaveText] = useState(rosterToText(initialLeaveTemplates));
+  const [welcomeText, setWelcomeText] = useState(
+    rosterToText(initialWelcomeDmTemplates)
+  );
   const [saving, setSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +66,7 @@ export function DefaultsForm({
       body: JSON.stringify({
         reminderTemplates: textToRoster(reminderText),
         leaveTemplates: textToRoster(leaveText),
+        welcomeDmTemplates: textToRoster(welcomeText),
       }),
     });
     setSaving(false);
@@ -96,6 +104,18 @@ export function DefaultsForm({
           setIsDirty(true);
         }}
         builtIns={builtInLeaveTemplates}
+      />
+
+      <RosterSection
+        title="Welcome DM messages"
+        description="One message per line. DMed to each member when they join (if enabled in Settings). Members with DMs closed are silently skipped. Keep it short and light on links — join DMs read as spam fast."
+        placeholders={["{user}", "{server}"]}
+        value={welcomeText}
+        onChange={(v) => {
+          setWelcomeText(v);
+          setIsDirty(true);
+        }}
+        builtIns={builtInWelcomeDmTemplates}
       />
 
       {error && (

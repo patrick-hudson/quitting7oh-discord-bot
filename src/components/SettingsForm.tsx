@@ -31,6 +31,7 @@ export function SettingsForm({
     redditChannelId: string;
     leaveEnabled: boolean;
     leaveChannelId: string;
+    welcomeDmEnabled: boolean;
   };
   roles: Array<{ id: string; name: string }>;
   channels: Array<{ id: string; name: string }>;
@@ -43,6 +44,7 @@ export function SettingsForm({
   const [redditChannelId, setRedditChannelId] = useState(initial.redditChannelId);
   const [leaveEnabled, setLeaveEnabled] = useState(initial.leaveEnabled);
   const [leaveChannelId, setLeaveChannelId] = useState(initial.leaveChannelId);
+  const [welcomeDmEnabled, setWelcomeDmEnabled] = useState(initial.welcomeDmEnabled);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +66,7 @@ export function SettingsForm({
         redditChannelId: redditChannelId || null,
         leaveEnabled,
         leaveChannelId: leaveChannelId || null,
+        welcomeDmEnabled,
       }),
     });
     setSaving(false);
@@ -218,6 +221,28 @@ export function SettingsForm({
             &quot;X left&quot; can land hard in a recovery space.
           </p>
         </div>
+      </div>
+
+      <div className="space-y-4 border-t border-white/10 pt-6">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-white/50">
+            Welcome DM
+          </h2>
+          <p className="mt-1 text-xs text-white/40">
+            DM a welcome message to each member when they join (every join,
+            including rejoins). Members with DMs closed are silently skipped.
+            Edit the message roster on the Defaults page.
+          </p>
+        </div>
+
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={welcomeDmEnabled}
+            onChange={(e) => setWelcomeDmEnabled(e.target.checked)}
+          />
+          Send a welcome DM to new members
+        </label>
       </div>
 
       {error && (

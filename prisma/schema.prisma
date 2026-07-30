@@ -49,6 +49,14 @@ model Guild {
   // Anti-repeat index for the roster picker, mirroring lastReminderIndex.
   lastLeaveIndex Int?
 
+  // Welcome DMs. When enabled, the bot DMs each member who joins (every join,
+  // including rejoins). Members with DMs closed are silently skipped. Templates
+  // support {user} and {server}; empty roster = baked-in defaults in
+  // src/lib/welcome-templates.ts.
+  welcomeDmEnabled   Boolean  @default(false)
+  welcomeDmTemplates String[] @default([])
+  lastWelcomeDmIndex Int?
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
