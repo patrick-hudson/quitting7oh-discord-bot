@@ -298,8 +298,8 @@ model BotAuditLog {
 // One row per moderation action observed in the guild — bans, unbans, kicks,
 // timeouts (from Discord's real-time audit-log gateway event) and message
 // deletions (with cached content when available). Distinct from BotAuditLog:
-// these are actions BY humans, surfaced for mod accountability. Pruned after
-// 90 days by the scheduler.
+// these are actions BY humans, surfaced for mod accountability. Deliberately
+// never pruned — accountability records keep forever.
 model ModerationLog {
   id      String @id @default(cuid())
   guildId String

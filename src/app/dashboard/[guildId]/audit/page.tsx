@@ -5,6 +5,7 @@
 
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { LocalTime } from "@/components/LocalTime";
 
 const PAGE_SIZE = 100;
 
@@ -92,9 +93,10 @@ export default async function AuditPage({
             <li key={e.id} className="bg-white/[0.02] px-4 py-3">
               <div className="flex items-baseline gap-3">
                 <StatusDot status={e.status} />
-                <span className="shrink-0 font-mono text-[11px] text-white/40">
-                  {e.createdAt.toLocaleString()}
-                </span>
+                <LocalTime
+                  iso={e.createdAt.toISOString()}
+                  className="shrink-0 font-mono text-[11px] text-white/40"
+                />
                 <span className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[10px] text-white/50 ring-1 ring-white/10">
                   {e.kind}
                 </span>

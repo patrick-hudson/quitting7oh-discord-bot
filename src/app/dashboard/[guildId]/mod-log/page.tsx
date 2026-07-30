@@ -5,6 +5,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { listTextChannels } from "@/lib/discord-rest";
+import { LocalTime } from "@/components/LocalTime";
 
 const PAGE_SIZE = 100;
 
@@ -76,7 +77,7 @@ export default async function ModLogPage({
       <h1 className="text-2xl font-semibold tracking-tight">Moderation log</h1>
       <p className="mt-1 text-sm text-white/60">
         Actions taken by moderators — bans, kicks, timeouts, and message
-        deletions with their content when the bot had it cached. Kept for 90 days.
+        deletions with their content when the bot had it cached. Kept forever.
       </p>
 
       <div className="mt-6 flex flex-wrap gap-1.5">
@@ -110,9 +111,10 @@ export default async function ModLogPage({
             return (
               <li key={e.id} className="bg-white/[0.02] px-4 py-3">
                 <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
-                  <span className="shrink-0 font-mono text-[11px] text-white/40">
-                    {e.createdAt.toLocaleString()}
-                  </span>
+                  <LocalTime
+                    iso={e.createdAt.toISOString()}
+                    className="shrink-0 font-mono text-[11px] text-white/40"
+                  />
                   <span className="font-medium text-white/90">
                     {e.executorName ?? e.executorId ?? "Unknown / self"}
                   </span>
