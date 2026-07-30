@@ -194,9 +194,17 @@ async function handleMessageDelete(
     authorId,
     message.channelId
   );
+  console.log(
+    `[mod-log] message delete: id=${message.id} channel=${message.channelId} cached=${!message.partial} author=${authorId ?? "unknown"} executor=${executorId ?? "none"} (${attribution})`
+  );
   // Self-deletes of uncached messages carry no author AND no content — pure
   // noise ("someone deleted something, we know nothing"). Skip those.
-  if (!authorId && !executorId && message.partial) return;
+  if (!authorId && !executorId && message.partial) {
+    console.log(
+      `[mod-log] skipped uncached self-delete ${message.id} — no author, no content, no audit entry`
+    );
+    return;
+  }
 
   const attachments = message.attachments?.map((a) => ({
     name: a.name,
