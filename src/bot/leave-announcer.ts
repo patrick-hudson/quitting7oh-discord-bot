@@ -55,8 +55,9 @@ export function registerLeaveAnnouncer(client: Client) {
         // Masked profile link — bots may use markdown links in plain content,
         // and discord.com/users/<id> opens the profile in-app. This stays
         // clickable after the member leaves, unlike a <@id> mention (which
-        // degrades to @unknown-user once they're gone).
-        const profile = `[${name}](https://discord.com/users/${member.id})`;
+        // degrades to @unknown-user once they're gone). Angle brackets around
+        // the URL suppress Discord's link-preview embed.
+        const profile = `[${name}](<https://discord.com/users/${member.id}>)`;
 
         const roster =
           config.leaveTemplates.length > 0 ? config.leaveTemplates : LEAVE_TEMPLATES;
