@@ -58,7 +58,20 @@ export function registerLeaveAnnouncer(client: Client) {
         // clickable after the member leaves, unlike a <@id> mention (which
         // degrades to @unknown-user once they're gone). Angle brackets around
         // the URL suppress Discord's link-preview embed.
-        const profile = `[${name}](<https://discord.com/users/${member.id}>)`;
+        //
+        // The link LABEL must be emoji-free: emoji in masked-link text breaks
+        // Discord's markdown parser in regular messages on desktop
+        // (discord-api-docs#6810). Brackets/parens would also confuse the
+        // markdown. Strip those from the label only — {user} keeps them —
+        // and fall back to the ASCII username if nothing survives.
+        const linkSafeName =
+          name
+            .replace(/[\p{Extended_Pictographic}\u{FE0F}\u{200D}]/gu, "")
+            .replace(/[\[\]()]/g, "")
+            .trim() ||
+          member.user?.username ||
+          "member";
+        const profile = `[${linkSafeName}](<https://discord.com/users/${member.id}>)`;
 
         const roster =
           config.leaveTemplates.length > 0 ? config.leaveTemplates : LEAVE_TEMPLATES;
