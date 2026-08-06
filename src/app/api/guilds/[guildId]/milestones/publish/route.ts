@@ -41,6 +41,17 @@ export const POST = withErrors(async (
     custom_id: `milestone:${t.id}`,
     emoji: { name: t.emoji },
   }));
+  // Self-service quiet reset — removes the member's milestone role(s) with no
+  // announcement. "reset" is a reserved custom_id suffix (tier ids are cuids,
+  // which can never equal it). Note: Discord caps a message at 25 buttons, so
+  // with the reset button the practical tier limit is 24.
+  buttons.push({
+    type: 2 as const,
+    style: 2 as const,
+    label: "Start over (reset my milestone)",
+    custom_id: "milestone:reset",
+    emoji: { name: "↩️" },
+  });
   const rows = buttonsToRows(buttons);
   const embed = {
     title: config.title,

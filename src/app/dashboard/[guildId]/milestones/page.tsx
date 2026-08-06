@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { listRoles, listTextChannels } from "@/lib/discord-rest";
 import { THEMES } from "@/lib/milestone-themes";
 import { MilestoneForm } from "@/components/MilestoneForm";
+import { MilestoneResetForm } from "@/components/MilestoneResetForm";
 
 const DEFAULT_TIERS = [
   {
@@ -249,6 +250,10 @@ export default async function MilestonesPage({
           roles={roles.map((r) => ({ id: r.id, name: r.name, color: r.color }))}
           themes={THEMES}
         />
+      </div>
+
+      <div className="mt-8">
+        <MilestoneResetForm guildId={guildId} />
       </div>
     </div>
   );

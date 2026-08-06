@@ -43,6 +43,62 @@ export function registerMilestoneHandler(client: Client) {
       console.warn("[milestones] deferReply failed (interaction likely expired):", err);
       return;
     }
+
+    // Self-service quiet reset: strip ONLY milestone-tier roles (mod/verified
+    // and everything else untouched by construction), no announcement of any
+    // kind — the only responses are this ephemeral (visible to the clicker
+    // alone) and an audit row.
+    if (tierId === "reset") {
+      try {
+        const guild = interaction.guild;
+        if (!guild) return;
+        const tiers = await prisma.milestoneTier.findMany({
+          where: { guildId: guild.id, roleId: { not: "" } },
+          select: { roleId: true, label: true },
+        });
+        const tierByRole = new Map(tiers.map((t) => [t.roleId, t.label]));
+        const member = await guild.members.fetch(interaction.user.id);
+        const held = [...tierByRole.keys()].filter((rid) =>
+          member.roles.cache.has(rid)
+        );
+
+        if (held.length === 0) {
+          await interaction.editReply({
+            content: "You don't have a milestone role to reset.",
+          });
+          return;
+        }
+        for (const roleId of held) {
+          await member.roles.remove(roleId, "Self-service milestone reset");
+        }
+        audit(
+          guild.id,
+          "milestone.self_reset",
+          `${member.user.globalName || member.user.username} reset their own milestone`,
+          {
+            userId: member.id,
+            removedTiers: held.map((r) => tierByRole.get(r)),
+            removedRoleIds: held,
+          }
+        );
+        await interaction.editReply({
+          content:
+            "Your milestone has been reset — quietly, no announcement. Resetting the counter doesn't erase what you learned. Day 1 of showing up still counts, and we're glad you're here. 💜",
+        });
+      } catch (err) {
+        console.error("[milestones] self-reset failed:", err);
+        try {
+          await interaction.editReply({
+            content:
+              "Something went wrong resetting your milestone. Try again in a sec, or ask a mod to reset it for you.",
+          });
+        } catch {
+          // already logged
+        }
+      }
+      return;
+    }
+
     try {
       const tier = await prisma.milestoneTier.findUnique({ where: { id: tierId } });
       if (!tier || tier.guildId !== interaction.guildId) {
