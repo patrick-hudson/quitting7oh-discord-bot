@@ -248,8 +248,12 @@ model UserExportJob {
   untilAt      DateTime? // null = up to now
   channelIds   String[] // empty = all text channels visible to the bot
 
-  // pending → running → done | failed
+  // pending → running → done | failed | cancelled
   status      String    @default("pending")
+  // Set by the portal's Cancel button. Pending jobs flip straight to
+  // cancelled before being claimed; running jobs notice between pages and
+  // stop. Cleared never — cancelled rows just age out with the prune.
+  cancelRequested Boolean @default(false)
   startedAt   DateTime?
   finishedAt  DateTime?
   error       String?   @db.Text

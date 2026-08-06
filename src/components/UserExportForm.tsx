@@ -15,7 +15,7 @@ type Job = {
   sinceAt: string | null;
   untilAt: string | null;
   channelIds: string[];
-  status: "pending" | "running" | "done" | "failed";
+  status: "pending" | "running" | "done" | "failed" | "cancelled";
   startedAt: string | null;
   finishedAt: string | null;
   error: string | null;
@@ -211,6 +211,21 @@ export function UserExportForm({
                     Download
                   </a>
                 )}
+                {(j.status === "pending" || j.status === "running") && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await fetch(
+                        `/api/guilds/${guildId}/user-export/${j.id}/cancel`,
+                        { method: "POST" }
+                      ).catch(() => {});
+                      void loadJobs();
+                    }}
+                    className="rounded-md px-2.5 py-1 text-xs text-red-300/80 ring-1 ring-red-500/20 hover:bg-red-500/10"
+                  >
+                    Cancel
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -226,6 +241,7 @@ function StatusBadge({ status }: { status: Job["status"] }) {
     running: "bg-amber-500/15 text-amber-300 ring-1 ring-amber-500/30",
     done: "bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30",
     failed: "bg-red-500/15 text-red-300 ring-1 ring-red-500/30",
+    cancelled: "bg-white/10 text-white/50 ring-1 ring-white/10",
   };
   return (
     <span className={`shrink-0 rounded px-2 py-0.5 text-[11px] font-medium ${styles[status]}`}>

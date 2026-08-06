@@ -13,10 +13,15 @@ function headers() {
 }
 
 // Wraps fetch with Discord-specific recovery:
-//   - 429 (rate limited): sleeps for `retry_after` seconds then retries, up to 5 attempts
+//   - 429 (rate limited): sleeps for `retry_after` seconds — escalating on
+//     repeat 429s (retry_after × attempt, capped at 60s) — up to 8 attempts.
+//     Discord itself does NOT back off harder per 429; it expects exact
+//     retry_after compliance. But repeated 429s count toward the invalid-
+//     request limit (10k per 10 min → temporary Cloudflare IP ban), so we
+//     escalate on our side to get out of a hot bucket fast.
 //   - 5xx (server side): exponential backoff (250ms, 500ms, 1000ms), up to 3 attempts
 // Other failures pass straight through so the caller can throw with context.
-const MAX_RATE_LIMIT_RETRIES = 5;
+const MAX_RATE_LIMIT_RETRIES = 8;
 const MAX_SERVER_ERROR_RETRIES = 3;
 async function discordFetch(url: string, init: RequestInit): Promise<Response> {
   let rateLimitAttempts = 0;
@@ -27,6 +32,8 @@ async function discordFetch(url: string, init: RequestInit): Promise<Response> {
     if (res.status === 429 && rateLimitAttempts < MAX_RATE_LIMIT_RETRIES) {
       rateLimitAttempts++;
       // Prefer the JSON body's retry_after; fall back to the response header.
+      // `body.global` means the whole bot is limited, not just this route —
+      // still just a sleep for us, but worth surfacing in the log line.
       const body = await res.clone().json().catch(() => ({}));
       const headerRetry = res.headers.get("retry-after");
       const retryAfterSec =
@@ -35,10 +42,13 @@ async function discordFetch(url: string, init: RequestInit): Promise<Response> {
           : headerRetry
           ? Number(headerRetry)
           : 1;
-      // Add a tiny jitter so concurrent callers don't synchronize on the same retry tick.
-      const waitMs = Math.max(retryAfterSec * 1000, 100) + Math.random() * 200;
+      // Escalate on consecutive 429s (attempt multiplier, capped at 60s) and
+      // add jitter so concurrent callers don't synchronize on the retry tick.
+      const waitMs =
+        Math.min(Math.max(retryAfterSec * 1000, 100) * rateLimitAttempts, 60_000) +
+        Math.random() * 250;
       console.warn(
-        `[discord-rest] 429 on ${init.method ?? "GET"} ${url} — waiting ${Math.round(
+        `[discord-rest] 429${body.global ? " (GLOBAL)" : ""} on ${init.method ?? "GET"} ${url} — waiting ${Math.round(
           waitMs
         )}ms (attempt ${rateLimitAttempts}/${MAX_RATE_LIMIT_RETRIES})`
       );
@@ -57,6 +67,19 @@ async function discordFetch(url: string, init: RequestInit): Promise<Response> {
     }
 
     return res;
+  }
+}
+
+// Proactive rate-limit pacing for tight paging loops (exports). Discord's
+// response headers say how many requests remain in the route's current bucket
+// and when it resets; sleeping when the bucket is empty avoids the 429
+// entirely — strictly better than reacting to one, since excessive 429s count
+// toward the invalid-request limit that triggers temporary IP bans.
+async function paceFromHeaders(res: Response): Promise<void> {
+  const remaining = Number(res.headers.get("x-ratelimit-remaining"));
+  const resetAfter = Number(res.headers.get("x-ratelimit-reset-after"));
+  if (remaining === 0 && Number.isFinite(resetAfter) && resetAfter > 0) {
+    await new Promise((r) => setTimeout(r, resetAfter * 1000 + 50));
   }
 }
 
@@ -227,6 +250,30 @@ export async function deleteRole(guildId: string, roleId: string): Promise<void>
   }
 }
 
+// Removes a single role from a member. `reason` lands in Discord's own audit
+// log so server admins can see why the bot did it. 404 (member or role gone)
+// is treated as success — the desired end-state holds either way.
+export async function removeMemberRole(
+  guildId: string,
+  userId: string,
+  roleId: string,
+  reason?: string
+): Promise<void> {
+  const res = await discordFetch(
+    `${BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`,
+    {
+      method: "DELETE",
+      headers: {
+        ...headers(),
+        ...(reason ? { "X-Audit-Log-Reason": encodeURIComponent(reason) } : {}),
+      },
+    }
+  );
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`discord removeMemberRole ${res.status}: ${await res.text()}`);
+  }
+}
+
 // --- Message fetching (for channel export) ---
 
 export type DiscordMessageRaw = {
@@ -299,6 +346,7 @@ export async function listMessages(
     collected.push(...batch);
     before = batch[batch.length - 1].id;
     if (batch.length < 100) break; // last page
+    await paceFromHeaders(res);
   }
 
   // API returns newest-first; reverse so the export reads chronologically.
@@ -321,7 +369,13 @@ export function snowflakeForDate(d: Date): string {
 export async function scanMessagesByAuthor(
   channelId: string,
   authorId: string,
-  options: { since?: Date | null; until?: Date | null; scanLimit?: number } = {}
+  options: {
+    since?: Date | null;
+    until?: Date | null;
+    scanLimit?: number;
+    // Checked between pages; return true to abort the scan (throws).
+    shouldAbort?: () => Promise<boolean> | boolean;
+  } = {}
 ): Promise<{ matches: DiscordMessageRaw[]; scanned: number; hitCap: boolean }> {
   const scanLimit = options.scanLimit ?? 20000;
   const sinceMs = options.since?.getTime() ?? null;
@@ -333,6 +387,9 @@ export async function scanMessagesByAuthor(
     : undefined;
 
   while (scanned < scanLimit) {
+    if (options.shouldAbort && (await options.shouldAbort())) {
+      throw new ScanAbortedError();
+    }
     const params = new URLSearchParams({ limit: "100" });
     if (before) params.set("before", before);
     const res = await discordFetch(
@@ -358,9 +415,21 @@ export async function scanMessagesByAuthor(
     if (pastSince) break;
     before = batch[batch.length - 1].id;
     if (batch.length < 100) break; // last page
+    // Sleep out the rest of the bucket window when it's exhausted, instead of
+    // provoking a 429 on the next page.
+    await paceFromHeaders(res);
   }
 
   return { matches: matches.reverse(), scanned, hitCap: scanned >= scanLimit };
+}
+
+// Thrown by scanMessagesByAuthor when the caller's shouldAbort() trips.
+// Callers use instanceof to distinguish a cancellation from a real failure.
+export class ScanAbortedError extends Error {
+  constructor() {
+    super("scan aborted by caller");
+    this.name = "ScanAbortedError";
+  }
 }
 
 // Lists members in a guild, paginated. Each page is up to 1000 members; we

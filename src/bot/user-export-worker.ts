@@ -16,6 +16,7 @@ import {
   listRoles,
   listTextChannels,
   scanMessagesByAuthor,
+  ScanAbortedError,
 } from "@/lib/discord-rest";
 import type { UserExportJob } from "@prisma/client";
 import { audit } from "@/lib/audit";
@@ -61,11 +62,21 @@ async function tick(client: Client) {
   // Prune old jobs so zip blobs don't accumulate in the DB forever.
   const cutoff = new Date(Date.now() - PRUNE_AFTER_DAYS * 24 * 60 * 60_000);
   await prisma.userExportJob.deleteMany({
-    where: { status: { in: ["done", "failed"] }, createdAt: { lt: cutoff } },
+    where: {
+      status: { in: ["done", "failed", "cancelled"] },
+      createdAt: { lt: cutoff },
+    },
+  });
+
+  // Finalize cancellations that raced the queue (e.g. a running job whose
+  // process died and was reset to pending with cancelRequested already set).
+  await prisma.userExportJob.updateMany({
+    where: { status: "pending", cancelRequested: true },
+    data: { status: "cancelled", finishedAt: new Date() },
   });
 
   const job = await prisma.userExportJob.findFirst({
-    where: { status: "pending" },
+    where: { status: "pending", cancelRequested: false },
     orderBy: { createdAt: "asc" },
   });
   if (!job) return;
@@ -112,6 +123,20 @@ async function tick(client: Client) {
     );
     await notifyRequester(client, job, result.matched);
   } catch (err) {
+    if (err instanceof ScanAbortedError) {
+      console.log(`[user-export] job ${job.id} cancelled`);
+      audit(
+        job.guildId,
+        "export.cancelled",
+        `User export for ${job.targetUserId} cancelled`,
+        { jobId: job.id, targetUserId: job.targetUserId, requestedBy: job.requestedBy }
+      );
+      await prisma.userExportJob.update({
+        where: { id: job.id },
+        data: { status: "cancelled", finishedAt: new Date() },
+      });
+      return;
+    }
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[user-export] job ${job.id} failed:`, err);
     audit(
@@ -168,13 +193,31 @@ async function runExport(job: UserExportJob): Promise<{
   const indexLines: string[] = [];
   const usedNames = new Set<string>();
 
+  // Cancellation check, throttled to one DB read per ~2s no matter how fast
+  // pages come back. Checked between pages (via shouldAbort) and per channel.
+  let lastCancelCheck = 0;
+  let cancelSeen = false;
+  const shouldAbort = async () => {
+    if (cancelSeen) return true;
+    if (Date.now() - lastCancelCheck < 2000) return false;
+    lastCancelCheck = Date.now();
+    const row = await prisma.userExportJob.findUnique({
+      where: { id: job.id },
+      select: { cancelRequested: true },
+    });
+    cancelSeen = Boolean(row?.cancelRequested);
+    return cancelSeen;
+  };
+
   for (const channel of targetChannels) {
+    if (await shouldAbort()) throw new ScanAbortedError();
     let scanned = 0;
     try {
       const result = await scanMessagesByAuthor(channel.id, job.targetUserId, {
         since: job.sinceAt,
         until: job.untilAt,
         scanLimit: SCAN_LIMIT_PER_CHANNEL,
+        shouldAbort,
       });
       scanned = result.scanned;
       totalScanned += result.scanned;
@@ -217,6 +260,9 @@ async function runExport(job: UserExportJob): Promise<{
           (result.hitCap ? " (⚠ scan capped)" : "")
       );
     } catch (err) {
+      // Cancellation must bubble up to end the whole job, not get recorded
+      // as a per-channel failure.
+      if (err instanceof ScanAbortedError) throw err;
       const message = (err as Error).message;
       indexLines.push(`- #${channel.name} — scan failed: ${message}`);
       totalScanned += scanned;
