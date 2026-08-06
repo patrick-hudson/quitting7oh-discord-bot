@@ -10,6 +10,39 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { RosterPreview } from "@/components/MessagePreview";
+
+// Sample-value substitution for congrats/ephemeral previews. {user} renders
+// as a plain @name (real sends use a mention pill).
+function congratsPreviewSub(tierLabel: string, tierEmoji: string) {
+  return (line: string) =>
+    line
+      .replaceAll("{user}", "**@Alex**")
+      .replaceAll("{tier}", tierLabel)
+      .replaceAll("{emoji}", tierEmoji)
+      .replaceAll("{claimChannel}", "<#0>")
+      .replaceAll("\\n", "\n");
+}
+
+function PreviewDetails({
+  lines,
+  substitute,
+}: {
+  lines: string[];
+  substitute: (line: string) => string;
+}) {
+  if (lines.length === 0) return null;
+  return (
+    <details className="text-xs text-white/50">
+      <summary className="cursor-pointer select-none hover:text-white/80">
+        Rendered preview (sample values)
+      </summary>
+      <div className="mt-2">
+        <RosterPreview lines={lines} substitute={substitute} />
+      </div>
+    </details>
+  );
+}
 
 export type TemplatesTier = {
   id: string;
@@ -198,6 +231,10 @@ export function MilestoneTemplatesForm({
                 placeholder="One message per line. Leave blank to use the guild fallback roster."
                 className="block w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
               />
+              <PreviewDetails
+                lines={lines}
+                substitute={congratsPreviewSub(t.label || "milestone", t.emoji || "🎉")}
+              />
             </section>
           );
         })}
@@ -230,6 +267,10 @@ export function MilestoneTemplatesForm({
             placeholder="One message per line."
             className="block w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
           />
+          <PreviewDetails
+            lines={textToRoster(congratsText)}
+            substitute={congratsPreviewSub("30 days", "🌱")}
+          />
         </section>
 
         <section className="space-y-2 rounded-2xl bg-white/[0.02] p-4 ring-1 ring-white/5">
@@ -253,6 +294,10 @@ export function MilestoneTemplatesForm({
             rows={Math.max(6, Math.min(textToRoster(ephemeralText).length + 2, 14))}
             placeholder="One message per line."
             className="block w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
+          />
+          <PreviewDetails
+            lines={textToRoster(ephemeralText)}
+            substitute={congratsPreviewSub("30 days", "🌱")}
           />
         </section>
       </div>

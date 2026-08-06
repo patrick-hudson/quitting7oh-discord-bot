@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { listRoles, listTextChannels } from "@/lib/discord-rest";
 import { SettingsForm } from "@/components/SettingsForm";
+import { ConfigBackup } from "@/components/ConfigBackup";
 
 export default async function SettingsPage({
   params,
@@ -36,6 +37,10 @@ export default async function SettingsPage({
           roles={roles.map((r) => ({ id: r.id, name: r.name }))}
           channels={channels.map((c) => ({ id: c.id, name: c.name }))}
         />
+      </div>
+
+      <div className="mt-8">
+        <ConfigBackup guildId={guildId} />
       </div>
     </div>
   );

@@ -448,6 +448,7 @@ export type DiscordMemberLite = {
     avatar: string | null;
   };
   roles: string[];
+  nick?: string | null;
   // ISO timestamp of when this user joined the guild. Null for the few system
   // members Discord returns without a join date (rare).
   joined_at: string | null;
@@ -471,6 +472,92 @@ export async function listGuildMembers(guildId: string): Promise<DiscordMemberLi
     after = batch[batch.length - 1].user.id;
   }
   return all;
+}
+
+// --- Raw structure reads used by guild snapshots (src/lib/guild-snapshot.ts) ---
+// Unlike the dropdown-oriented helpers above, these return EVERYTHING
+// unfiltered (all roles including @everyone/managed, all channel types),
+// because a backup that silently drops rows isn't a backup.
+
+export type DiscordRoleRaw = {
+  id: string;
+  name: string;
+  color: number;
+  hoist: boolean;
+  position: number;
+  permissions: string; // bitfield as decimal string
+  managed: boolean;
+  mentionable: boolean;
+  icon?: string | null;
+  unicode_emoji?: string | null;
+};
+
+export async function listRolesRaw(guildId: string): Promise<DiscordRoleRaw[]> {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/roles`, { headers: headers() });
+  if (!res.ok) throw new Error(`discord roles ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export type DiscordChannelRaw = {
+  id: string;
+  name: string;
+  type: number;
+  position: number;
+  parent_id: string | null;
+  topic?: string | null;
+  nsfw?: boolean;
+  rate_limit_per_user?: number;
+  bitrate?: number;
+  user_limit?: number;
+  permission_overwrites?: Array<{
+    id: string; // role or member id
+    type: number; // 0 = role, 1 = member
+    allow: string;
+    deny: string;
+  }>;
+};
+
+export async function listAllChannels(guildId: string): Promise<DiscordChannelRaw[]> {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/channels`, { headers: headers() });
+  if (!res.ok) throw new Error(`discord channels ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export type DiscordEmojiRaw = {
+  id: string;
+  name: string;
+  animated?: boolean;
+  managed?: boolean;
+  available?: boolean;
+};
+
+export async function listEmojis(guildId: string): Promise<DiscordEmojiRaw[]> {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/emojis`, { headers: headers() });
+  if (!res.ok) throw new Error(`discord emojis ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export type DiscordGuildRaw = {
+  id: string;
+  name: string;
+  icon: string | null;
+  banner?: string | null;
+  description?: string | null;
+  verification_level?: number;
+  default_message_notifications?: number;
+  explicit_content_filter?: number;
+  afk_channel_id?: string | null;
+  afk_timeout?: number;
+  system_channel_id?: string | null;
+  rules_channel_id?: string | null;
+  public_updates_channel_id?: string | null;
+  preferred_locale?: string;
+};
+
+export async function getGuildRaw(guildId: string): Promise<DiscordGuildRaw> {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}`, { headers: headers() });
+  if (!res.ok) throw new Error(`discord guild ${res.status}: ${await res.text()}`);
+  return res.json();
 }
 
 // Pinned messages for a channel. Discord caps this at 50 per channel and

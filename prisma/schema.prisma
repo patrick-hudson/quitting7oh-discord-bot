@@ -333,6 +333,21 @@ model ModerationLog {
   @@index([guildId, kind, createdAt])
 }
 
+// A point-in-time snapshot of a guild's structure: settings, roles, channels
+// (with permission overwrites), emojis, and member role-assignments/nicknames.
+// Collected nightly by the scheduler and on demand from the portal. Powers
+// the Snapshots page's diff view and the restore-assist feature. `data` shape
+// is defined in src/lib/guild-snapshot.ts (GuildSnapshotData).
+model GuildSnapshot {
+  id        String   @id @default(cuid())
+  guildId   String
+  kind      String   @default("scheduled") // scheduled | manual
+  data      Json
+  createdAt DateTime @default(now())
+
+  @@index([guildId, createdAt])
+}
+
 // --- Auth.js (NextAuth v5) tables ---
 // Standard Prisma adapter schema; lets users sign in via Discord OAuth.
 

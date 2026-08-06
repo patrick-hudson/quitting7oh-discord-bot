@@ -18,6 +18,7 @@ import { computeNextFireAt } from "@/lib/cron";
 import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
 import { substituteAnsiColorTokens } from "@/lib/ansi-tokens";
 import { audit } from "@/lib/audit";
+import { takeGuildSnapshot } from "@/lib/guild-snapshot";
 import type { PostReminder, ScheduledPost } from "@prisma/client";
 
 // Pick a random reminder template, avoiding the index used last time for this
@@ -60,6 +61,57 @@ async function tick(client: Client) {
   await fireManualRequests(client);
   await fireDueReminders(client);
   await pruneAuditLog();
+  await takeScheduledSnapshots();
+}
+
+// Nightly structure snapshots (roles/channels/settings/members) per guild.
+// Checked every 6h; a snapshot is taken when the newest scheduled one is
+// older than 24h. Retention: newest 60 scheduled snapshots per guild
+// (manual snapshots are kept until deleted by hand).
+let lastSnapshotCheck = 0;
+async function takeScheduledSnapshots() {
+  if (Date.now() - lastSnapshotCheck < 6 * 60 * 60_000) return;
+  lastSnapshotCheck = Date.now();
+  const guilds = await prisma.guild.findMany({ select: { id: true, name: true } });
+  for (const g of guilds) {
+    try {
+      const newest = await prisma.guildSnapshot.findFirst({
+        where: { guildId: g.id, kind: "scheduled" },
+        orderBy: { createdAt: "desc" },
+        select: { createdAt: true },
+      });
+      if (newest && Date.now() - newest.createdAt.getTime() < 24 * 60 * 60_000) {
+        continue;
+      }
+      const id = await takeGuildSnapshot(g.id, "scheduled");
+      audit(g.id, "snapshot.taken", `Nightly structure snapshot of ${g.name}`, {
+        snapshotId: id,
+        kind: "scheduled",
+      });
+
+      // Retention — drop scheduled snapshots beyond the newest 60.
+      const excess = await prisma.guildSnapshot.findMany({
+        where: { guildId: g.id, kind: "scheduled" },
+        orderBy: { createdAt: "desc" },
+        skip: 60,
+        select: { id: true },
+      });
+      if (excess.length > 0) {
+        await prisma.guildSnapshot.deleteMany({
+          where: { id: { in: excess.map((s) => s.id) } },
+        });
+      }
+    } catch (err) {
+      console.error(`[scheduler] snapshot failed for guild ${g.id}:`, err);
+      audit(
+        g.id,
+        "snapshot.failed",
+        `Nightly snapshot of ${g.name} failed`,
+        { error: (err as Error).message?.slice(0, 500) },
+        "error"
+      );
+    }
+  }
 }
 
 // Keep 90 days of bot-audit rows; check at most every 6 hours so the delete

@@ -14,6 +14,7 @@ import {
   CalendarClock,
   ChevronsUpDown,
   Download,
+  History,
   Layers,
   LayoutDashboard,
   LogOut,
@@ -76,6 +77,7 @@ export function AppSidebar({
     { href: `${base}/export`, label: "Export", icon: Download },
     { href: `${base}/audit`, label: "Audit log", icon: ScrollText },
     { href: `${base}/mod-log`, label: "Mod log", icon: Shield },
+    { href: `${base}/snapshots`, label: "Snapshots", icon: History },
     { href: `${base}/defaults`, label: "Defaults", icon: MessageSquareText },
     { href: `${base}/settings`, label: "Settings", icon: Settings },
   ];

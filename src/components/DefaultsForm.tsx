@@ -7,6 +7,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { RosterPreview } from "@/components/MessagePreview";
 
 function rosterToText(roster: string[]): string {
   return roster.join("\n");
@@ -92,6 +93,8 @@ export function DefaultsForm({
           setIsDirty(true);
         }}
         builtIns={builtInReminderTemplates}
+        previewSubstitute={(line) => line.replaceAll("\\n", "\n")}
+        previewMeetingDate={new Date(Date.now() + 15 * 60_000)}
       />
 
       <RosterSection
@@ -104,6 +107,13 @@ export function DefaultsForm({
           setIsDirty(true);
         }}
         builtIns={builtInLeaveTemplates}
+        previewSubstitute={(line) =>
+          line
+            .replaceAll("{profile}", "[Alex](<https://discord.com/users/0>)")
+            .replaceAll("{user}", "Alex")
+            .replaceAll("{count}", "128")
+            .replaceAll("\\n", "\n")
+        }
       />
 
       <RosterSection
@@ -116,6 +126,12 @@ export function DefaultsForm({
           setIsDirty(true);
         }}
         builtIns={builtInWelcomeDmTemplates}
+        previewSubstitute={(line) =>
+          line
+            .replaceAll("{user}", "Alex")
+            .replaceAll("{server}", "r/quitting7oh")
+            .replaceAll("\\n", "\n")
+        }
       />
 
       {error && (
@@ -157,6 +173,8 @@ function RosterSection({
   value,
   onChange,
   builtIns,
+  previewSubstitute,
+  previewMeetingDate,
 }: {
   title: string;
   description: string;
@@ -164,9 +182,13 @@ function RosterSection({
   value: string;
   onChange: (v: string) => void;
   builtIns: string[];
+  // Maps a raw template line to preview text (sample placeholder values).
+  previewSubstitute?: (line: string) => string;
+  previewMeetingDate?: Date;
 }) {
   const customLines = textToRoster(value);
   const usingBuiltIns = customLines.length === 0;
+  const effectiveLines = usingBuiltIns ? builtIns : customLines;
 
   return (
     <section className="space-y-3 rounded-2xl bg-white/[0.02] p-5 ring-1 ring-white/5">
@@ -237,6 +259,18 @@ function RosterSection({
           ))}
         </ul>
       </details>
+
+      <div>
+        <p className="mb-1.5 text-xs text-white/40">
+          Rendered preview — {usingBuiltIns ? "built-in defaults" : "your messages"},
+          with sample values:
+        </p>
+        <RosterPreview
+          lines={effectiveLines}
+          substitute={previewSubstitute}
+          meetingDate={previewMeetingDate}
+        />
+      </div>
     </section>
   );
 }

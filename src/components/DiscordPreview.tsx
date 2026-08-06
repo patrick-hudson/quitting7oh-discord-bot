@@ -127,7 +127,7 @@ function formatClockTime(d: Date): string {
 // Replace bot-level placeholders ({meetingTime[:fmt]}) and raw Discord tokens
 // (<t:UNIX:fmt>, <@&roleId>, <#channelId>) into preview-friendly tokens that
 // the markdown renderer below knows how to style.
-function substitutePlaceholders(
+export function substitutePlaceholders(
   text: string,
   meetingDate: Date,
   roles: Role[],
@@ -166,7 +166,7 @@ function substitutePlaceholders(
 
 // Tiny markdown renderer. Handles the subset Discord supports for our posts.
 // Returns React nodes (not HTML strings) so we don't have to dangerously set HTML.
-function renderDiscordMarkdown(
+export function renderDiscordMarkdown(
   text: string,
   _roles: Role[],
   _channels: Channel[]

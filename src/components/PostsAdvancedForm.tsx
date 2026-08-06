@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { ChannelPicker } from "./ChannelPicker";
 import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { CronHint } from "@/components/CronHint";
+import { DiscordPreview } from "@/components/DiscordPreview";
 
 type Channel = { id: string; name: string; parent_id: string | null };
 type Role = { id: string; name: string; color: number };
@@ -62,6 +63,7 @@ export function PostsAdvancedForm({
   const [saving, setSaving] = useState(false);
   const [expandedChannels, setExpandedChannels] = useState<Set<string>>(new Set());
   const [expandedEmbed, setExpandedEmbed] = useState<Set<string>>(new Set());
+  const [expandedPreview, setExpandedPreview] = useState<Set<string>>(new Set());
   // Per-post focus-time snapshot of leadMinutes (keyed by post id), so a
   // cancelled confirmation can revert the lead value the user just typed.
   // Single shared confirmation state — at most one open at a time since the
@@ -447,6 +449,28 @@ export function PostsAdvancedForm({
                   </div>
                 )}
               </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => toggleSet(setExpandedPreview, p.id)}
+              className="text-xs text-white/50 hover:text-white"
+            >
+              {expandedPreview.has(p.id) ? "▾" : "▸"} Rendered preview
+            </button>
+            {expandedPreview.has(p.id) && (
+              <DiscordPreview
+                useEmbed={p.useEmbed}
+                content={p.content}
+                embedTitle={p.embedTitle}
+                embedColor={p.embedColor || "#5865F2"}
+                embedUrl={p.embedUrl}
+                embedImage={p.embedImage}
+                mentionRoleId={p.mentionRoleId}
+                leadMinutes={p.leadMinutes}
+                roles={roles.map((r) => ({ id: r.id, name: r.name }))}
+                channels={channels.map((c) => ({ id: c.id, name: c.name }))}
+              />
             )}
           </section>
         );
