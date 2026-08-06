@@ -16,6 +16,7 @@ Companion docs:
 - [KA_MEETINGS.md](KA_MEETINGS.md) — the seeded Kratom Anonymous meeting posts + seeder script.
 - [REMINDERS.md](REMINDERS.md) — follow-up reminders and the bulk-enable scripts.
 - [REDDIT.md](REDDIT.md) — announcing new subreddit posts to a channel (via Reddit's public RSS, no API key).
+- [BACKUPS.md](BACKUPS.md) — structure snapshots + diffs, config export/import, media-preserving exports, continuous message archive, restore assist.
 - [LEAD_TIME.md](LEAD_TIME.md) — changing a post's warning lead time (preview/apply scripts).
 - [MIGRATIONS.md](MIGRATIONS.md) — schema-change workflow (manual SQL + additive `db push`).
 - [LIGHTSAIL.md](LIGHTSAIL.md) — checklist for moving from local Docker to AWS Lightsail.
