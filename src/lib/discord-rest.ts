@@ -250,6 +250,86 @@ export async function deleteRole(guildId: string, roleId: string): Promise<void>
   }
 }
 
+// --- Restore-assist write helpers ---
+// All creation here is used by the restore worker, which paces itself hard:
+// Discord applies aggressive undocumented anti-nuke limits to role creation
+// (tripping them can block role creation for 24h+), so callers must space
+// these out rather than blasting.
+
+export async function createRoleRaw(
+  guildId: string,
+  payload: {
+    name: string;
+    color?: number;
+    hoist?: boolean;
+    mentionable?: boolean;
+    permissions?: string;
+  },
+  reason?: string
+): Promise<DiscordRoleRaw> {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/roles`, {
+    method: "POST",
+    headers: {
+      ...headers(),
+      ...(reason ? { "X-Audit-Log-Reason": encodeURIComponent(reason) } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`discord createRole ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function createChannelRaw(
+  guildId: string,
+  payload: {
+    name: string;
+    type: number;
+    parent_id?: string | null;
+    topic?: string | null;
+    nsfw?: boolean;
+    rate_limit_per_user?: number;
+    permission_overwrites?: Array<{
+      id: string;
+      type: number;
+      allow: string;
+      deny: string;
+    }>;
+  },
+  reason?: string
+): Promise<DiscordChannelRaw> {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}/channels`, {
+    method: "POST",
+    headers: {
+      ...headers(),
+      ...(reason ? { "X-Audit-Log-Reason": encodeURIComponent(reason) } : {}),
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`discord createChannel ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function addMemberRole(
+  guildId: string,
+  userId: string,
+  roleId: string,
+  reason?: string
+): Promise<void> {
+  const res = await discordFetch(
+    `${BASE}/guilds/${guildId}/members/${userId}/roles/${roleId}`,
+    {
+      method: "PUT",
+      headers: {
+        ...headers(),
+        ...(reason ? { "X-Audit-Log-Reason": encodeURIComponent(reason) } : {}),
+      },
+    }
+  );
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`discord addMemberRole ${res.status}: ${await res.text()}`);
+  }
+}
+
 // Removes a single role from a member. `reason` lands in Discord's own audit
 // log so server admins can see why the bot did it. 404 (member or role gone)
 // is treated as success — the desired end-state holds either way.

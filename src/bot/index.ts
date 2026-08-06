@@ -20,6 +20,7 @@ import { runScheduler } from "./scheduler";
 import { runRedditPoller } from "./reddit-poller";
 import { runUserExportWorker } from "./user-export-worker";
 import { runArchiveWorker } from "./archive-worker";
+import { runRestoreWorker } from "./restore-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -108,6 +109,7 @@ async function main() {
     runRedditPoller(client);
     runUserExportWorker(client);
     runArchiveWorker();
+    runRestoreWorker();
   });
 
   client.on(Events.GuildCreate, async (g) => {

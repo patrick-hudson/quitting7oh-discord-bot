@@ -375,6 +375,32 @@ model ArchiveChannelState {
   @@index([guildId])
 }
 
+// A restore-assist job: rebuild missing structure from a GuildSnapshot.
+// Strictly non-destructive — the worker only CREATES roles/channels that are
+// missing and ADDs roles to members; it never deletes or modifies existing
+// things. Processed by src/bot/restore-worker.ts with heavy pacing (role
+// creation has undocumented anti-nuke limits).
+model RestoreJob {
+  id         String @id @default(cuid())
+  guildId    String
+  snapshotId String
+  // Which parts to restore: { createRoles, createChannels, reapplyMemberRoles }
+  options Json
+  // pending → running → done | failed
+  status     String    @default("pending")
+  startedAt  DateTime?
+  finishedAt DateTime?
+  error      String?   @db.Text
+  // Append-only progress log (array of strings) shown in the portal.
+  log Json @default("[]")
+
+  requestedBy String
+  createdAt   DateTime @default(now())
+
+  @@index([guildId, createdAt])
+  @@index([status, createdAt])
+}
+
 // --- Auth.js (NextAuth v5) tables ---
 // Standard Prisma adapter schema; lets users sign in via Discord OAuth.
 
