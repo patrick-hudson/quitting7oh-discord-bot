@@ -19,6 +19,7 @@ import { iconUrl } from "@/lib/discord-rest";
 import { runScheduler } from "./scheduler";
 import { runRedditPoller } from "./reddit-poller";
 import { runUserExportWorker } from "./user-export-worker";
+import { runArchiveWorker } from "./archive-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -106,6 +107,7 @@ async function main() {
     runScheduler(client);
     runRedditPoller(client);
     runUserExportWorker(client);
+    runArchiveWorker();
   });
 
   client.on(Events.GuildCreate, async (g) => {

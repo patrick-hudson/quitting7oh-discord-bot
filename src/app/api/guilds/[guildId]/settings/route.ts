@@ -21,6 +21,7 @@ const settingsSchema = z.object({
   leaveEnabled: z.boolean(),
   leaveChannelId: z.union([z.string().regex(/^\d{17,21}$/), z.literal(""), z.null()]),
   welcomeDmEnabled: z.boolean(),
+  archiveEnabled: z.boolean(),
 });
 
 export const PATCH = withErrors(async (
@@ -68,6 +69,7 @@ export const PATCH = withErrors(async (
       leaveEnabled: input.leaveEnabled,
       leaveChannelId,
       welcomeDmEnabled: input.welcomeDmEnabled,
+      archiveEnabled: input.archiveEnabled,
       ...(subredditChanged ? { redditLastPostAt: null } : {}),
     },
   });

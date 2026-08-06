@@ -39,11 +39,14 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/quitting7oh?schema=public
+      ARCHIVE_DIR: /data/archive
     depends_on:
       migrate:
         condition: service_completed_successfully
     ports:
       - "3000:3000"
+    volumes:
+      - archive_data:/data/archive:ro
     command: npm run start
 
   bot:
@@ -55,10 +58,15 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/quitting7oh?schema=public
+      ARCHIVE_DIR: /data/archive
     depends_on:
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - archive_data:/data/archive
     command: npm run bot:prod
 
 volumes:
   postgres_data:
+  # Full-message-archive storage: bot writes, web reads (downloads).
+  archive_data:

@@ -43,7 +43,7 @@ export const GET = withErrors(async (
       welcomeDmEnabled: guild.welcomeDmEnabled,
       welcomeDmTemplates: guild.welcomeDmTemplates,
       reminderTemplates: guild.reminderTemplates,
-      archiveEnabled: (guild as { archiveEnabled?: boolean }).archiveEnabled ?? false,
+      archiveEnabled: guild.archiveEnabled,
     },
     posts: posts.map((p) => ({
       name: p.name,

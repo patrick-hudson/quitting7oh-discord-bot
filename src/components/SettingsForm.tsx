@@ -32,6 +32,7 @@ export function SettingsForm({
     leaveEnabled: boolean;
     leaveChannelId: string;
     welcomeDmEnabled: boolean;
+    archiveEnabled: boolean;
   };
   roles: Array<{ id: string; name: string }>;
   channels: Array<{ id: string; name: string }>;
@@ -45,6 +46,7 @@ export function SettingsForm({
   const [leaveEnabled, setLeaveEnabled] = useState(initial.leaveEnabled);
   const [leaveChannelId, setLeaveChannelId] = useState(initial.leaveChannelId);
   const [welcomeDmEnabled, setWelcomeDmEnabled] = useState(initial.welcomeDmEnabled);
+  const [archiveEnabled, setArchiveEnabled] = useState(initial.archiveEnabled);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +69,7 @@ export function SettingsForm({
         leaveEnabled,
         leaveChannelId: leaveChannelId || null,
         welcomeDmEnabled,
+        archiveEnabled,
       }),
     });
     setSaving(false);
@@ -242,6 +245,29 @@ export function SettingsForm({
             onChange={(e) => setWelcomeDmEnabled(e.target.checked)}
           />
           Send a welcome DM to new members
+        </label>
+      </div>
+
+      <div className="space-y-4 border-t border-white/10 pt-6">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-white/50">
+            Full message archive
+          </h2>
+          <p className="mt-1 text-xs text-white/40">
+            Continuously copies every channel&apos;s message history (including
+            attachment files) to the server&apos;s archive storage for disaster
+            recovery. This stores all message text the bot can see — let your
+            community know before enabling. Status on the Export page.
+          </p>
+        </div>
+
+        <label className="flex cursor-pointer items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={archiveEnabled}
+            onChange={(e) => setArchiveEnabled(e.target.checked)}
+          />
+          Archive all messages continuously
         </label>
       </div>
 

@@ -57,6 +57,11 @@ model Guild {
   welcomeDmTemplates String[] @default([])
   lastWelcomeDmIndex Int?
 
+  // Full message archive: when enabled, the archive worker incrementally
+  // copies every channel's history (messages as JSONL + attachment bytes) to
+  // ARCHIVE_DIR on disk. See src/bot/archive-worker.ts and BACKUPS.md.
+  archiveEnabled Boolean @default(false)
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -349,6 +354,25 @@ model GuildSnapshot {
   createdAt DateTime @default(now())
 
   @@index([guildId, createdAt])
+}
+
+// Per-channel cursor + counters for the full message archive. The JSONL and
+// media files live on disk under ARCHIVE_DIR; this row records how far the
+// worker has gotten (lastMessageId = highest archived snowflake) so runs are
+// incremental and crash-safe.
+model ArchiveChannelState {
+  id            String   @id @default(cuid())
+  guildId       String
+  channelId     String
+  channelName   String
+  lastMessageId String?
+  archivedCount Int      @default(0)
+  mediaCount    Int      @default(0)
+  mediaBytes    BigInt   @default(0)
+  updatedAt     DateTime @updatedAt
+
+  @@unique([guildId, channelId])
+  @@index([guildId])
 }
 
 // --- Auth.js (NextAuth v5) tables ---

@@ -432,6 +432,30 @@ export class ScanAbortedError extends Error {
   }
 }
 
+// One forward page of channel history for the incremental archive: messages
+// strictly AFTER `after` (or from the very beginning when omitted), returned
+// ascending. Discord's ordering with the `after` cursor isn't worth trusting —
+// we sort by snowflake ourselves. Paces from rate-limit headers before
+// returning so tight loops don't provoke 429s.
+export async function fetchMessagesAfter(
+  channelId: string,
+  after?: string
+): Promise<{ messages: DiscordMessageRaw[]; hasMore: boolean }> {
+  const params = new URLSearchParams({ limit: "100" });
+  if (after) params.set("after", after);
+  const res = await discordFetch(
+    `${BASE}/channels/${channelId}/messages?${params.toString()}`,
+    { headers: headers() }
+  );
+  if (!res.ok) {
+    throw new Error(`discord fetchMessagesAfter ${res.status}: ${await res.text()}`);
+  }
+  const batch = (await res.json()) as DiscordMessageRaw[];
+  batch.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
+  await paceFromHeaders(res);
+  return { messages: batch, hasMore: batch.length === 100 };
+}
+
 // Lists members in a guild, paginated. Each page is up to 1000 members; we
 // stop once a short page comes back. Used by the dashboard to count how many
 // people hold each milestone role.

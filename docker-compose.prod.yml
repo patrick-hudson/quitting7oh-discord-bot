@@ -49,11 +49,14 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/quitting7oh?schema=public
+      ARCHIVE_DIR: /data/archive
     depends_on:
       migrate:
         condition: service_completed_successfully
     ports:
       - "3000:3000"
+    volumes:
+      - archive_data:/data/archive:ro
     command: npm run start
 
   bot:
@@ -62,9 +65,12 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/quitting7oh?schema=public
+      ARCHIVE_DIR: /data/archive
     depends_on:
       migrate:
         condition: service_completed_successfully
+    volumes:
+      - archive_data:/data/archive
     command: npm run bot:prod
   caddy:
     image: caddy:2-alpine
@@ -82,3 +88,6 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  # Full-message-archive storage: bot writes, web reads (downloads). Include
+  # this volume in host-level backups — it's the disaster-recovery copy.
+  archive_data:
