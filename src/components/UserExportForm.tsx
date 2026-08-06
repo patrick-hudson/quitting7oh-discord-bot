@@ -36,6 +36,7 @@ export function UserExportForm({
   const [since, setSince] = useState(""); // datetime-local
   const [until, setUntil] = useState("");
   const [channelIds, setChannelIds] = useState<string[]>([]);
+  const [includeMedia, setIncludeMedia] = useState(false);
   const [showChannels, setShowChannels] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,6 +76,7 @@ export function UserExportForm({
         sinceAt: since ? new Date(since).toISOString() : null,
         untilAt: until ? new Date(until).toISOString() : null,
         channelIds,
+        includeMedia,
       }),
     });
     setSubmitting(false);
@@ -165,6 +167,19 @@ export function UserExportForm({
             </div>
           )}
         </div>
+
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-white/80">
+          <input
+            type="checkbox"
+            checked={includeMedia}
+            onChange={(e) => setIncludeMedia(e.target.checked)}
+          />
+          <span>Include media files</span>
+        </label>
+        <p className="-mt-2 text-xs text-white/40">
+          Downloads the user&apos;s attachments into the zip so links don&apos;t
+          expire (~24h). Size caps apply; larger zips.
+        </p>
 
         {error && (
           <div className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-300 ring-1 ring-red-500/20">

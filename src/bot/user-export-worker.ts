@@ -12,6 +12,7 @@ import JSZip from "jszip";
 import { Client } from "discord.js";
 import { prisma } from "@/lib/db";
 import { formatMessage, type Resolver } from "@/lib/discord-export";
+import { downloadAttachmentsIntoZip, mediaSummaryLine } from "@/lib/export-media";
 import {
   listRoles,
   listTextChannels,
@@ -175,10 +176,19 @@ async function runExport(job: UserExportJob): Promise<{
   const channelById = new Map(allChannels.map((c) => [c.id, c.name]));
   const roleById = new Map(allRoles.map((r) => [r.id, r.name]));
   const userById = new Map<string, string>();
+  const mediaPaths = new Map<string, string>();
+  const mediaStats = {
+    downloaded: 0,
+    skippedTooLarge: 0,
+    skippedOverBudget: 0,
+    failed: 0,
+    bytes: 0,
+  };
   const resolver: Resolver = {
     user: (id) => userById.get(id) ?? id,
     role: (id) => roleById.get(id) ?? id,
     channel: (id) => channelById.get(id) ?? id,
+    media: job.includeMedia ? (id) => mediaPaths.get(id) ?? null : undefined,
   };
 
   const targetChannels =
@@ -242,6 +252,15 @@ async function runExport(job: UserExportJob): Promise<{
         }
       }
 
+      if (job.includeMedia) {
+        const { paths } = await downloadAttachmentsIntoZip(
+          result.matches,
+          zip,
+          mediaStats
+        );
+        for (const [id, p] of paths) mediaPaths.set(id, p);
+      }
+
       totalMatched += result.matches.length;
       const safeName = uniqueFileName(channel.name, channel.id, usedNames);
       const out: string[] = [
@@ -282,6 +301,7 @@ async function runExport(job: UserExportJob): Promise<{
       "",
       "Deleted messages can't be recovered — this export reflects what is",
       "currently visible to the bot on Discord.",
+      ...(job.includeMedia ? ["", mediaSummaryLine(mediaStats)] : []),
       "",
       "## Channels",
       ...(indexLines.length > 0 ? indexLines : ["*No messages found.*"]),

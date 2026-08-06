@@ -12,6 +12,7 @@ export function ExportForm({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [limit, setLimit] = useState(10000);
   const [onlyPinned, setOnlyPinned] = useState(false);
+  const [includeMedia, setIncludeMedia] = useState(false);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,6 +36,7 @@ export function ExportForm({
           channelIds: Array.from(selected),
           limitPerChannel: limit,
           onlyPinned,
+          includeMedia,
         }),
       });
       if (!res.ok) {
@@ -126,6 +128,22 @@ export function ExportForm({
         <p className="mt-1 text-xs text-white/40">
           Exports just the pinned posts from each selected channel (Discord caps
           this at 50 pins per channel).
+        </p>
+      </div>
+
+      <div>
+        <label className="flex cursor-pointer items-center gap-2 text-sm text-white/80">
+          <input
+            type="checkbox"
+            checked={includeMedia}
+            onChange={(e) => setIncludeMedia(e.target.checked)}
+          />
+          <span>Include media files</span>
+        </label>
+        <p className="mt-1 text-xs text-white/40">
+          Downloads attachments into the zip (media/ folder) so the archive
+          keeps working — Discord&apos;s attachment links expire after ~24h.
+          Larger download; per-file and total size caps apply.
         </p>
       </div>
 

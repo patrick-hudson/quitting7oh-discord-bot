@@ -248,6 +248,9 @@ model UserExportJob {
   untilAt      DateTime? // null = up to now
   channelIds   String[] // empty = all text channels visible to the bot
 
+  // Archive attachment bytes into the zip (media/) so the export survives
+  // Discord's ~24h signed-URL expiry.
+  includeMedia Boolean @default(false)
   // pending → running → done | failed | cancelled
   status      String    @default("pending")
   // Set by the portal's Cancel button. Pending jobs flip straight to

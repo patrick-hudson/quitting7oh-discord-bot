@@ -13,6 +13,10 @@ export type Resolver = {
   user: (id: string) => string;
   role: (id: string) => string;
   channel: (id: string) => string;
+  // attachment id → zip-relative path when the file was archived into the
+  // export (see export-media.ts); null/undefined = link the (expiring)
+  // Discord CDN URL instead.
+  media?: (attachmentId: string) => string | null;
 };
 
 export function formatMessage(msg: DiscordMessageRaw, resolve: Resolver): string {
@@ -35,9 +39,10 @@ export function formatMessage(msg: DiscordMessageRaw, resolve: Resolver): string
   const attachmentsMd = msg.attachments
     .map((a) => {
       const isImage = (a.content_type ?? "").startsWith("image/");
+      const target = resolve.media?.(a.id) ?? a.url;
       return isImage
-        ? `![${a.filename}](${a.url})`
-        : `📎 [${a.filename}](${a.url}) (${formatBytes(a.size)})`;
+        ? `![${a.filename}](${target})`
+        : `📎 [${a.filename}](${target}) (${formatBytes(a.size)})`;
     })
     .join("\n");
   const reactionsMd =

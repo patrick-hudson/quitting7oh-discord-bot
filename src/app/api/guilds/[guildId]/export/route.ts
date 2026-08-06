@@ -10,6 +10,7 @@ import {
   listTextChannels,
 } from "@/lib/discord-rest";
 import { formatMessage, type Resolver } from "@/lib/discord-export";
+import { downloadAttachmentsIntoZip, mediaSummaryLine } from "@/lib/export-media";
 
 const bodySchema = z.object({
   channelIds: z
@@ -18,6 +19,9 @@ const bodySchema = z.object({
     .max(25),
   limitPerChannel: z.number().int().min(1).max(50000).default(10000),
   onlyPinned: z.boolean().default(false),
+  // Archive attachment bytes into the zip (media/) so the export survives
+  // Discord's ~24h signed-URL expiry. Off by default — media can be big.
+  includeMedia: z.boolean().default(false),
 });
 
 // POST — fetches messages from each selected channel, formats as Markdown,
@@ -29,7 +33,9 @@ export const POST = withErrors(async (
   const { guildId } = await ctx.params;
   await requireGuildAccess(guildId);
 
-  const { channelIds, limitPerChannel, onlyPinned } = bodySchema.parse(await req.json());
+  const { channelIds, limitPerChannel, onlyPinned, includeMedia } = bodySchema.parse(
+    await req.json()
+  );
 
   // Pre-fetch channels and roles so we can resolve mentions while formatting.
   // Users get resolved per-message from the message author/mentions arrays —
@@ -43,10 +49,21 @@ export const POST = withErrors(async (
   // userById is populated lazily from each message's mentions/author.
   const userById = new Map<string, string>();
 
+  // Populated per-channel below when includeMedia is on.
+  const mediaPaths = new Map<string, string>();
+  const mediaStats = {
+    downloaded: 0,
+    skippedTooLarge: 0,
+    skippedOverBudget: 0,
+    failed: 0,
+    bytes: 0,
+  };
+
   const resolver: Resolver = {
     user: (id) => userById.get(id) ?? id,
     role: (id) => roleById.get(id) ?? id,
     channel: (id) => channelById.get(id) ?? id,
+    media: includeMedia ? (id) => mediaPaths.get(id) ?? null : undefined,
   };
 
   const zip = new JSZip();
@@ -82,6 +99,11 @@ export const POST = withErrors(async (
         }
       }
 
+      if (includeMedia) {
+        const { paths } = await downloadAttachmentsIntoZip(messages, zip, mediaStats);
+        for (const [id, p] of paths) mediaPaths.set(id, p);
+      }
+
       const label = onlyPinned ? "pinned message(s)" : "message(s)";
       out.push(`*${messages.length} ${label}.*`);
       for (const m of messages) {
@@ -97,6 +119,9 @@ export const POST = withErrors(async (
     zip.file(fileName, out.join("\n\n"));
   }
 
+  if (includeMedia) {
+    indexLines.push("", `*${mediaSummaryLine(mediaStats)}*`);
+  }
   zip.file("index.md", indexLines.join("\n"));
 
   const blob = await zip.generateAsync({

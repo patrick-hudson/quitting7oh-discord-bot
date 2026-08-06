@@ -18,6 +18,7 @@ const createSchema = z
       .array(z.string().regex(/^\d{17,21}$/))
       .max(100)
       .default([]),
+    includeMedia: z.boolean().default(false),
   })
   .superRefine((v, ctx) => {
     if (v.sinceAt && v.untilAt && new Date(v.sinceAt) >= new Date(v.untilAt)) {
@@ -64,6 +65,7 @@ export const POST = withErrors(async (
       sinceAt: input.sinceAt ? new Date(input.sinceAt) : null,
       untilAt: input.untilAt ? new Date(input.untilAt) : null,
       channelIds: input.channelIds,
+      includeMedia: input.includeMedia,
       requestedBy,
     },
   });
