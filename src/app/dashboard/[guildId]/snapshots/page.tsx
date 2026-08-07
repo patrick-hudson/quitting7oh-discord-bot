@@ -70,9 +70,18 @@ export default async function SnapshotsPage({
             </p>
           </div>
           {diff.isEmpty ? (
-            <p className="mt-3 text-sm text-white/60">
-              No structural changes between these snapshots.
-            </p>
+            <div className="mt-3 space-y-1 text-sm text-white/60">
+              <p>
+                No changes to roles, channels, permissions, settings, or emojis.
+              </p>
+              {diff.memberCountDelta !== 0 && (
+                <p className="text-xs text-white/40">
+                  Member count changed by {diff.memberCountDelta > 0 ? "+" : ""}
+                  {diff.memberCountDelta} (routine joins/leaves — not counted as
+                  a structural change; see the Mod log for who).
+                </p>
+              )}
+            </div>
           ) : (
             <DiffView diff={diff} data={newerData} />
           )}
