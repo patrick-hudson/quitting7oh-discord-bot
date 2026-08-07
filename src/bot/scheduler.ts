@@ -18,7 +18,6 @@ import { computeNextFireAt } from "@/lib/cron";
 import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
 import { substituteAnsiColorTokens } from "@/lib/ansi-tokens";
 import { audit } from "@/lib/audit";
-import { takeGuildSnapshot } from "@/lib/guild-snapshot";
 import { fetchRecentMessageIds, dateFromSnowflake } from "@/lib/discord-rest";
 import type { Prisma } from "@prisma/client";
 import type { PostReminder, ScheduledPost } from "@prisma/client";
@@ -66,15 +65,15 @@ async function tick(client: Client) {
   await takeScheduledSnapshots();
 }
 
-// Nightly structure snapshots (roles/channels/settings/members) per guild.
-// Checked every 6h; a snapshot is taken when the newest scheduled one is
-// older than 24h. Retention: newest 60 scheduled snapshots per guild
-// (manual snapshots are kept until deleted by hand).
+// Nightly structure snapshots. Checked every 6h; enqueues a scheduled
+// SnapshotJob when the newest scheduled snapshot is older than 24h. The
+// snapshot worker (src/bot/snapshot-worker.ts) does the actual collection with
+// per-step progress + retention.
 let lastSnapshotCheck = 0;
 async function takeScheduledSnapshots() {
   if (Date.now() - lastSnapshotCheck < 6 * 60 * 60_000) return;
   lastSnapshotCheck = Date.now();
-  const guilds = await prisma.guild.findMany({ select: { id: true, name: true } });
+  const guilds = await prisma.guild.findMany({ select: { id: true } });
   for (const g of guilds) {
     try {
       const newest = await prisma.guildSnapshot.findFirst({
@@ -85,33 +84,16 @@ async function takeScheduledSnapshots() {
       if (newest && Date.now() - newest.createdAt.getTime() < 24 * 60 * 60_000) {
         continue;
       }
-      const id = await takeGuildSnapshot(g.id, "scheduled");
-      audit(g.id, "snapshot.taken", `Nightly structure snapshot of ${g.name}`, {
-        snapshotId: id,
-        kind: "scheduled",
+      // Don't stack jobs if one's already queued/running for this guild.
+      const inFlight = await prisma.snapshotJob.count({
+        where: { guildId: g.id, status: { in: ["pending", "running"] } },
       });
-
-      // Retention — drop scheduled snapshots beyond the newest 60.
-      const excess = await prisma.guildSnapshot.findMany({
-        where: { guildId: g.id, kind: "scheduled" },
-        orderBy: { createdAt: "desc" },
-        skip: 60,
-        select: { id: true },
+      if (inFlight > 0) continue;
+      await prisma.snapshotJob.create({
+        data: { guildId: g.id, kind: "scheduled" },
       });
-      if (excess.length > 0) {
-        await prisma.guildSnapshot.deleteMany({
-          where: { id: { in: excess.map((s) => s.id) } },
-        });
-      }
     } catch (err) {
-      console.error(`[scheduler] snapshot failed for guild ${g.id}:`, err);
-      audit(
-        g.id,
-        "snapshot.failed",
-        `Nightly snapshot of ${g.name} failed`,
-        { error: (err as Error).message?.slice(0, 500) },
-        "error"
-      );
+      console.error(`[scheduler] enqueue snapshot failed for guild ${g.id}:`, err);
     }
   }
 }

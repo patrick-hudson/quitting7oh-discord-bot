@@ -6,7 +6,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { LocalTime } from "@/components/LocalTime";
-import { SnapshotNowButton } from "@/components/SnapshotNowButton";
+import { SnapshotRunner } from "@/components/SnapshotRunner";
 import { diffSnapshots, type SnapshotDiff } from "@/lib/snapshot-diff";
 import type { GuildSnapshotData } from "@/lib/guild-snapshot";
 
@@ -55,7 +55,7 @@ export default async function SnapshotsPage({
             since the one before it.
           </p>
         </div>
-        <SnapshotNowButton guildId={guildId} />
+        <SnapshotRunner guildId={guildId} />
       </div>
 
       {diff && diffLabel && (

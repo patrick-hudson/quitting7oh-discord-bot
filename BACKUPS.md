@@ -14,11 +14,14 @@ stack (Postgres + the archive volume).
 
 ## Structure snapshots (portal → Snapshots)
 
-The scheduler captures a full structural snapshot **nightly** per guild:
-server settings, all roles (including permissions bitfields), all channels
-with permission overwrites, emojis, and every member's role assignments and
-nickname. "Snapshot now" takes one on demand. Retention: newest 60 scheduled
-snapshots; manual snapshots are kept until deleted by hand.
+The scheduler enqueues a full structural snapshot **nightly** per guild, and
+"Snapshot now" enqueues one on demand. Either way the bot's snapshot worker
+runs it as a visible job — the page shows **each step live** (server settings,
+roles, channels & permissions, emojis, members, store) with a spinner/✓ per
+step and how long each took. A snapshot captures server settings, all roles
+(including permission bitfields), all channels with permission overwrites,
+emojis, and every member's role assignments and nickname. Retention: newest 60
+scheduled snapshots; manual snapshots are kept until deleted by hand.
 
 The **diff view** ("Diff vs previous") decodes exactly what changed between
 two snapshots — roles created/deleted, permissions granted (flagged ⚠),
@@ -96,6 +99,11 @@ live server — then queues a worker job that:
 role creation (tripping them can block the bot from creating roles for
 24h+), so the worker paces at ~5s per role and ~1.5s per channel. A big
 rebuild takes minutes; watch the live log on the Restore page.
+
+**Hard to trigger by accident**: launching a restore requires a prominent
+warning, two acknowledgement checkboxes, and typing the server's name to
+confirm — the button stays disabled until all three pass, and the gates reset
+after each run. It's break-glass, and it's built to feel like it.
 
 **What cannot be restored** (Discord API limits, not ours): message history
 (only lossy webhook reposting exists, deliberately not implemented), departed

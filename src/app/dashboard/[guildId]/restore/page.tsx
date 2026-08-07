@@ -19,6 +19,7 @@ export default async function RestorePage({
   const { guildId } = await params;
   const { snapshot: snapshotId } = await searchParams;
 
+  const guild = await prisma.guild.findUnique({ where: { id: guildId } });
   const snapshots = await prisma.guildSnapshot.findMany({
     where: { guildId },
     orderBy: { createdAt: "desc" },
@@ -150,6 +151,7 @@ export default async function RestorePage({
           <div className="mt-6">
             <RestoreLauncher
               guildId={guildId}
+              guildName={guild?.name ?? "this server"}
               snapshotId={selected!.id}
               missingRoles={missingRoles.length}
               missingChannels={missingChannels.length}

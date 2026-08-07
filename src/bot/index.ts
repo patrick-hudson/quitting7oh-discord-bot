@@ -21,6 +21,7 @@ import { runRedditPoller } from "./reddit-poller";
 import { runUserExportWorker } from "./user-export-worker";
 import { runArchiveWorker } from "./archive-worker";
 import { runRestoreWorker } from "./restore-worker";
+import { runSnapshotWorker } from "./snapshot-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -110,6 +111,7 @@ async function main() {
     runUserExportWorker(client);
     runArchiveWorker();
     runRestoreWorker();
+    runSnapshotWorker();
   });
 
   client.on(Events.GuildCreate, async (g) => {

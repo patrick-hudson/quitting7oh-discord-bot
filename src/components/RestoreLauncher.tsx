@@ -17,11 +17,13 @@ type Job = {
 
 export function RestoreLauncher({
   guildId,
+  guildName,
   snapshotId,
   missingRoles,
   missingChannels,
 }: {
   guildId: string;
+  guildName: string;
   snapshotId: string;
   missingRoles: number;
   missingChannels: number;
@@ -31,6 +33,9 @@ export function RestoreLauncher({
     createChannels: true,
     reapplyMemberRoles: false,
   });
+  const [ackDisruptive, setAckDisruptive] = useState(false);
+  const [ackRateLimit, setAckRateLimit] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
@@ -69,13 +74,41 @@ export function RestoreLauncher({
       setError(d.error ?? `Failed (${res.status})`);
       return;
     }
+    // Reset the gates so a second run requires re-confirming from scratch.
+    setAckDisruptive(false);
+    setAckRateLimit(false);
+    setConfirmText("");
     void loadJobs();
   }
 
   const latest = jobs[0];
+  const gatesPassed =
+    ackDisruptive &&
+    ackRateLimit &&
+    confirmText.trim().toLowerCase() === guildName.trim().toLowerCase();
 
   return (
     <div className="space-y-4">
+      <div className="rounded-2xl border border-amber-500/40 bg-amber-500/[0.07] p-4 text-sm">
+        <p className="font-semibold text-amber-200">⚠ Read before running a restore</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-amber-100/80">
+          <li>
+            This creates roles and channels in bulk. It <strong>cannot be
+            undone</strong> with one click — you&apos;d have to delete each
+            recreated thing by hand.
+          </li>
+          <li>
+            Discord rate-limits role creation aggressively. A large restore
+            takes several minutes, and rushing it can get the bot{" "}
+            <strong>blocked from creating roles for 24+ hours</strong>.
+          </li>
+          <li>
+            Only run this to recover from an actual loss (a nuked or
+            misconfigured server) — not to &quot;sync&quot; routine changes.
+          </li>
+        </ul>
+      </div>
+
       <div className="flex flex-wrap gap-4 text-sm text-white/80">
         <label className="flex cursor-pointer items-center gap-2">
           <input
@@ -115,11 +148,48 @@ export function RestoreLauncher({
         </p>
       )}
 
+      {/* Confirmation gates — all three required to enable the button. */}
+      <div className="space-y-2 rounded-lg bg-white/[0.03] p-3 ring-1 ring-white/10">
+        <label className="flex cursor-pointer items-start gap-2 text-sm text-white/80">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={ackDisruptive}
+            onChange={(e) => setAckDisruptive(e.target.checked)}
+          />
+          I understand this creates roles/channels in bulk and can&apos;t be
+          undone with one click.
+        </label>
+        <label className="flex cursor-pointer items-start gap-2 text-sm text-white/80">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={ackRateLimit}
+            onChange={(e) => setAckRateLimit(e.target.checked)}
+          />
+          I understand a rushed restore can lock the bot out of role creation
+          for 24+ hours.
+        </label>
+        <div className="pt-1">
+          <label className="mb-1 block text-xs text-white/60">
+            Type the server name{" "}
+            <span className="font-mono text-white/80">{guildName}</span> to
+            confirm:
+          </label>
+          <input
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder={guildName}
+            className="w-full rounded-md bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/25 focus:outline-none focus:ring-2 focus:ring-amber-500/60"
+          />
+        </div>
+      </div>
+
       <button
         type="button"
-        disabled={active}
+        disabled={active || !gatesPassed}
         onClick={() => setConfirmOpen(true)}
-        className="rounded-lg bg-[color:var(--color-brand-600)] px-4 py-2 text-sm font-medium hover:bg-[color:var(--color-brand-500)] disabled:opacity-50"
+        className="rounded-lg bg-red-600/80 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:cursor-not-allowed disabled:bg-white/5 disabled:text-white/40"
       >
         {active ? "Restore running…" : "Start restore"}
       </button>
@@ -140,16 +210,22 @@ export function RestoreLauncher({
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Start restore?"
+        destructive
+        title={`Restore ${guildName} from this snapshot?`}
         description={
           <>
-            The bot will recreate missing structure from this snapshot —
-            slowly, on purpose (Discord rate-limits role creation hard).
-            Nothing existing is deleted or modified. Message history cannot be
-            restored.
+            Last chance to back out. The bot will start creating{" "}
+            {missingRoles > 0 && <strong>{missingRoles} role(s)</strong>}
+            {missingRoles > 0 && missingChannels > 0 && " and "}
+            {missingChannels > 0 && (
+              <strong>{missingChannels} channel(s)</strong>
+            )}
+            {missingRoles === 0 && missingChannels === 0 && "member role changes"}
+            , slowly, over several minutes. Nothing existing is deleted, but this
+            can&apos;t be undone with one click.
           </>
         }
-        confirmLabel="Start restore"
+        confirmLabel="Yes, start restore"
         onCancel={() => setConfirmOpen(false)}
         onConfirm={() => void launch()}
       />

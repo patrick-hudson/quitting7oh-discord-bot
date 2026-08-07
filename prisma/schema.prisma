@@ -371,6 +371,28 @@ model GuildSnapshot {
   @@index([guildId, createdAt])
 }
 
+// A snapshot run, processed by the bot's snapshot worker. Exists so the portal
+// can show live per-step progress + timing instead of a snapshot just
+// "appearing". `steps` is an array of { name, status, ms, detail } updated as
+// the worker walks each collection step. On success `snapshotId` points at the
+// stored GuildSnapshot. Pruned to the recent few per guild.
+model SnapshotJob {
+  id          String    @id @default(cuid())
+  guildId     String
+  kind        String    @default("manual") // scheduled | manual
+  status      String    @default("pending") // pending | running | done | failed
+  steps       Json      @default("[]")
+  snapshotId  String?
+  error       String?   @db.Text
+  requestedBy String?
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([guildId, createdAt])
+  @@index([status, createdAt])
+}
+
 // Per-channel cursor + counters for the full message archive. The JSONL and
 // media files live on disk under ARCHIVE_DIR; this row records how far the
 // worker has gotten (lastMessageId = highest archived snowflake) so runs are

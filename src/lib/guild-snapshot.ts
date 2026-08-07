@@ -48,14 +48,49 @@ export type GuildSnapshotData = {
   counts: { roles: number; channels: number; emojis: number; members: number };
 };
 
+// A step runner: times `fn`, reports it to the caller (for live progress),
+// and returns fn's result. `detail` turns the result into a short human note
+// (e.g. "42 roles"). Used by the snapshot worker to record per-step timing.
+export type SnapshotStep = <T>(
+  name: string,
+  fn: () => Promise<T>,
+  detail?: (result: T) => string
+) => Promise<T>;
+
 export async function collectGuildSnapshot(guildId: string): Promise<GuildSnapshotData> {
-  const [guild, roles, channels, emojis, members] = await Promise.all([
-    getGuildRaw(guildId),
-    listRolesRaw(guildId),
-    listAllChannels(guildId),
-    listEmojis(guildId),
-    listGuildMembers(guildId),
-  ]);
+  // Non-instrumented path: run all steps as a no-op reporter.
+  const passthrough: SnapshotStep = (_name, fn) => fn();
+  return collectGuildSnapshotStepwise(guildId, passthrough);
+}
+
+// Instrumented collection: each fetch is a named, timed step. Runs
+// sequentially (not Promise.all) so per-step timing is meaningful and the
+// portal can show exactly what the bot is doing right now.
+export async function collectGuildSnapshotStepwise(
+  guildId: string,
+  step: SnapshotStep
+): Promise<GuildSnapshotData> {
+  const guild = await step("Server settings", () => getGuildRaw(guildId));
+  const roles = await step(
+    "Roles",
+    () => listRolesRaw(guildId),
+    (r) => `${r.length} role(s)`
+  );
+  const channels = await step(
+    "Channels & permissions",
+    () => listAllChannels(guildId),
+    (c) => `${c.length} channel(s)`
+  );
+  const emojis = await step(
+    "Emojis",
+    () => listEmojis(guildId),
+    (e) => `${e.length} emoji(s)`
+  );
+  const members = await step(
+    "Members & role assignments",
+    () => listGuildMembers(guildId),
+    (m) => `${m.length} member(s)`
+  );
 
   const memberData: SnapshotMember[] = members.map((m) => ({
     id: m.user.id,
