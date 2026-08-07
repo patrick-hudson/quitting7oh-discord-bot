@@ -20,6 +20,9 @@ const CATEGORIES = [
   { key: "leave", label: "Departures" },
   { key: "milestone", label: "Milestones" },
   { key: "export", label: "Exports" },
+  { key: "snapshot", label: "Snapshots" },
+  { key: "archive", label: "Archive" },
+  { key: "restore", label: "Restore" },
 ] as const;
 
 export default async function AuditPage({
