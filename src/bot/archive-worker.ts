@@ -70,33 +70,74 @@ async function tick() {
   for (const g of guilds) {
     let totalNew = 0;
     const touched: string[] = [];
+    // A guild-level failure (can't even list channels) aborts this guild; a
+    // per-channel failure is recorded and we move on to the next channel.
+    let channels;
     try {
-      const channels = await listTextChannels(g.id);
-      for (const ch of channels) {
+      channels = await listTextChannels(g.id);
+    } catch (err) {
+      console.error(`[archive] can't list channels for guild ${g.id}:`, err);
+      audit(
+        g.id,
+        "archive.failed",
+        "Archive run couldn't list channels — will retry next interval",
+        { error: (err as Error).message?.slice(0, 500) },
+        "error"
+      );
+      continue;
+    }
+
+    const failures: Array<{ channel: string; reason: string }> = [];
+    for (const ch of channels) {
+      try {
         const added = await archiveChannel(g.id, ch.id, ch.name);
         if (added > 0) {
           totalNew += added;
           touched.push(`#${ch.name} (+${added})`);
         }
+      } catch (err) {
+        const reason = describeChannelError(err);
+        console.warn(`[archive] #${ch.name} (${ch.id}) skipped: ${reason}`);
+        failures.push({ channel: `#${ch.name} (${ch.id})`, reason });
+        // continue to the next channel — one bad channel never stalls the rest
       }
-      if (totalNew > 0) {
-        console.log(`[archive] ${g.name}: +${totalNew} message(s)`);
-        audit(g.id, "archive.ran", `Archived ${totalNew} new message(s)`, {
-          channels: touched.slice(0, 25),
-          totalNew,
-        });
-      }
-    } catch (err) {
-      console.error(`[archive] failed for guild ${g.id}:`, err);
+    }
+
+    if (totalNew > 0) {
+      console.log(`[archive] ${g.name}: +${totalNew} message(s)`);
+      audit(g.id, "archive.ran", `Archived ${totalNew} new message(s)`, {
+        channels: touched.slice(0, 25),
+        totalNew,
+        ...(failures.length > 0 ? { skippedChannels: failures.length } : {}),
+      });
+    }
+    if (failures.length > 0) {
       audit(
         g.id,
-        "archive.failed",
-        "Archive run failed — will retry next interval",
-        { error: (err as Error).message?.slice(0, 500) },
-        "error"
+        "archive.channel_skipped",
+        `Archive skipped ${failures.length} channel(s) it can't read — continued with the rest`,
+        { failures: failures.slice(0, 50) },
+        "warn"
       );
     }
   }
+}
+
+// Turn a raw Discord error into an actionable reason. The most common one for
+// archiving is a 403 Missing Access (code 50001), which means the bot's role
+// lacks View Channel and/or Read Message History in that specific channel.
+function describeChannelError(err: unknown): string {
+  const msg = (err as Error).message ?? String(err);
+  if (msg.includes("50001") || msg.includes(" 403")) {
+    return "Missing Access (403) — the bot's role needs View Channel + Read Message History on this channel";
+  }
+  if (msg.includes("50013") || msg.includes(" 401")) {
+    return "Missing Permissions — grant the bot Read Message History here";
+  }
+  if (msg.includes(" 404")) {
+    return "Channel not found (404) — it may have been deleted";
+  }
+  return msg.slice(0, 300);
 }
 
 async function archiveChannel(
