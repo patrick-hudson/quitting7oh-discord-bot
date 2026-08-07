@@ -32,8 +32,9 @@ export type PostRowValues = {
   embedImage: string;
   mentionRoleId: string;
   leadMinutes: number;
-  // Carried through so a bulk save doesn't wipe it — edited on the single-post
-  // form, not per card here.
+  // Carried through so a bulk save doesn't wipe them — edited on the
+  // single-post form, not per card here.
+  skipMode: "off" | "recent" | "auto";
   skipIfRecentWithin: number | null;
   reminderMinutes: number | null;
   reminderContent: string;
@@ -134,6 +135,7 @@ export function PostsAdvancedForm({
           embedImage: post.embedImage,
           mentionRoleId: post.mentionRoleId,
           leadMinutes: post.leadMinutes,
+          skipMode: post.skipMode,
           skipIfRecentWithin: post.skipIfRecentWithin,
           reminderMinutes: post.reminderMinutes,
           reminderContent: post.reminderContent,

@@ -165,11 +165,18 @@ model ScheduledPost {
   // Used to resolve {meetingTime} placeholders in the body.
   leadMinutes Int @default(0)
 
-  // Anti-spam for repetitive posts (e.g. a scam warning on a cron): when set,
-  // a SCHEDULED fire skips a channel if this post's previous message is still
-  // within the channel's last N messages. null/0 = always post. Manual "Fire
-  // now" ignores this. lastMessageIds maps channelId → the message id of the
-  // most recent successful send there, used for the scrollback check.
+  // Anti-spam for repetitive posts (e.g. a scam warning on a cron). Applies to
+  // SCHEDULED fires only ("Fire now" always posts). Modes:
+  //   "off"    — always post (default)
+  //   "recent" — skip a channel if the previous message is still within its
+  //              last `skipIfRecentWithin` messages
+  //   "auto"   — skip unless enough real (non-bot) messages have been sent in
+  //              the channel since the bot last posted there; the bot decides
+  //              from actual activity (no number to tune)
+  // lastMessageIds maps channelId → the message id of the most recent send
+  // there; used for the recent-scrollback check and (via its snowflake
+  // timestamp) as the "since we last posted" boundary for auto mode.
+  skipMode           String @default("off")
   skipIfRecentWithin Int?
   lastMessageIds     Json?
 

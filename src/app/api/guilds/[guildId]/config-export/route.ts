@@ -59,6 +59,7 @@ export const GET = withErrors(async (
       embedImage: p.embedImage,
       mentionRoleId: p.mentionRoleId,
       leadMinutes: p.leadMinutes,
+      skipMode: p.skipMode,
       skipIfRecentWithin: p.skipIfRecentWithin,
       reminderMinutes: p.reminderMinutes,
       reminderContent: p.reminderContent,

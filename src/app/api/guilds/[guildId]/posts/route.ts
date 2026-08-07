@@ -50,6 +50,7 @@ export const POST = withErrors(async (
       embedImage: input.embedImage || null,
       mentionRoleId: input.mentionRoleId || null,
       leadMinutes: input.leadMinutes,
+      skipMode: input.skipMode,
       skipIfRecentWithin: input.skipIfRecentWithin,
       reminderMinutes: input.reminderMinutes,
       reminderContent: input.reminderContent,

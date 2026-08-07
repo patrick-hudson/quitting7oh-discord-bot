@@ -441,6 +441,13 @@ export function snowflakeForDate(d: Date): string {
   return String((BigInt(d.getTime()) - DISCORD_EPOCH) << 22n);
 }
 
+// Inverse: the creation time embedded in a Discord snowflake. Used by the
+// "auto" post-skip mode to learn when the bot last posted in a channel from
+// its stored message id, with no extra column.
+export function dateFromSnowflake(id: string): Date {
+  return new Date(Number((BigInt(id) >> 22n) + DISCORD_EPOCH));
+}
+
 // Scan a channel newest→oldest, keeping only messages by `authorId` within
 // [since, until]. Stops paging once messages get older than `since` (or the
 // scan cap is hit). Returns matches in chronological order plus how many

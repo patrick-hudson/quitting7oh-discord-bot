@@ -19,7 +19,7 @@ import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
 import { substituteAnsiColorTokens } from "@/lib/ansi-tokens";
 import { audit } from "@/lib/audit";
 import { takeGuildSnapshot } from "@/lib/guild-snapshot";
-import { fetchRecentMessageIds } from "@/lib/discord-rest";
+import { fetchRecentMessageIds, dateFromSnowflake } from "@/lib/discord-rest";
 import type { Prisma } from "@prisma/client";
 import type { PostReminder, ScheduledPost } from "@prisma/client";
 
@@ -157,10 +157,13 @@ async function fireDuePosts(client: Client) {
         audit(
           post.guildId,
           "post.skipped_recent",
-          `Skipped "${post.name}" — still within the last ${post.skipIfRecentWithin} messages`,
+          post.skipMode === "auto"
+            ? `Skipped "${post.name}" — channel(s) too quiet since the last post`
+            : `Skipped "${post.name}" — still within the last ${post.skipIfRecentWithin} messages`,
           {
             postId: post.id,
             postName: post.name,
+            skipMode: post.skipMode,
             skippedChannels: sent.skipped,
           }
         );
@@ -483,6 +486,40 @@ function substituteChannelMentions(
 }
 
 
+// Minimum non-bot messages since our last post before "auto" mode reposts.
+// A screen's worth of real conversation ≈ the old notice has scrolled off and
+// there are eyes to notice a fresh one. Env-tunable.
+const AUTO_SKIP_MIN_MESSAGES = Number(
+  process.env.POST_AUTO_SKIP_MIN_MESSAGES ?? "15"
+);
+
+// Decide whether to SKIP posting this post in `channelId`. priorMessageId is
+// this post's last send there (guaranteed present by the caller).
+//   recent — skip while that message is still in the last N messages
+//   auto   — skip unless >= AUTO_SKIP_MIN_MESSAGES non-bot messages have been
+//            logged in the channel since that message was posted
+async function shouldSkipChannel(
+  post: ScheduledPost,
+  channelId: string,
+  priorMessageId: string
+): Promise<boolean> {
+  if (post.skipMode === "recent") {
+    const within = post.skipIfRecentWithin ?? 25;
+    const recent = await fetchRecentMessageIds(channelId, within);
+    return recent.has(priorMessageId);
+  }
+  if (post.skipMode === "auto") {
+    // MessageEvent logs every message (activity graph); the prior message id's
+    // snowflake gives us when we last posted here — count human messages since.
+    const since = dateFromSnowflake(priorMessageId);
+    const humanSince = await prisma.messageEvent.count({
+      where: { channelId, isBot: false, sentAt: { gt: since } },
+    });
+    return humanSince < AUTO_SKIP_MIN_MESSAGES;
+  }
+  return false;
+}
+
 async function sendPost(
   client: Client,
   post: ScheduledPost & { guild: { timezone: string } },
@@ -502,7 +539,7 @@ async function sendPost(
     post.lastMessageIds && typeof post.lastMessageIds === "object"
       ? (post.lastMessageIds as Record<string, string>)
       : {};
-  const skipWithin = respectRecency ? (post.skipIfRecentWithin ?? 0) : 0;
+  const skipMode = respectRecency ? post.skipMode : "off";
 
   const mention = post.mentionRoleId ? `<@&${post.mentionRoleId}>` : "";
   const allowedMentions = post.mentionRoleId
@@ -563,19 +600,17 @@ async function sendPost(
         if (!channel || !channel.isTextBased() || !("send" in channel)) {
           throw new Error("not a sendable text channel");
         }
-        // Recency skip: if this post's previous message here is still within
-        // the last N messages, don't repost. A failed fetch falls through to
-        // posting (better a possible dupe than a silent gap).
-        if (skipWithin > 0 && priorIds[channelId]) {
+        // Anti-spam skip check (recent / auto). A failed check falls through
+        // to posting — better a possible dupe than a silent gap.
+        if (skipMode !== "off" && priorIds[channelId]) {
           try {
-            const recent = await fetchRecentMessageIds(channelId, skipWithin);
-            if (recent.has(priorIds[channelId])) {
+            if (await shouldSkipChannel(post, channelId, priorIds[channelId])) {
               skipped.push(channelId);
               return;
             }
           } catch (err) {
             console.warn(
-              `[scheduler] recency check failed for ${channelId}, posting anyway:`,
+              `[scheduler] skip check failed for ${channelId}, posting anyway:`,
               err
             );
           }

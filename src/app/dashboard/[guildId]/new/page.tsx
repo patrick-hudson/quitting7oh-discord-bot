@@ -47,6 +47,7 @@ export default async function NewPostPage({
         embedImage: starter.embedImage ?? "",
         mentionRoleId: starter.mentionRoleId ?? "",
         leadMinutes: starter.leadMinutes,
+        skipMode: starter.skipMode as "off" | "recent" | "auto",
         skipIfRecentWithin: starter.skipIfRecentWithin,
         reminderMinutes: starter.reminderMinutes,
         reminderContent: starter.reminderContent ?? "",
