@@ -402,11 +402,18 @@ model ArchiveChannelState {
   guildId       String
   channelId     String
   channelName   String
+  // Forward cursor: highest archived snowflake. New messages after this are
+  // pulled on each run to keep up.
   lastMessageId String?
-  archivedCount Int      @default(0)
-  mediaCount    Int      @default(0)
-  mediaBytes    BigInt   @default(0)
-  updatedAt     DateTime @updatedAt
+  // Backfill cursor: lowest archived snowflake. The worker walks backward from
+  // here until it reaches the channel's first message, then sets
+  // backfillComplete so it stops paging old history.
+  oldestMessageId  String?
+  backfillComplete Boolean @default(false)
+  archivedCount    Int     @default(0)
+  mediaCount       Int     @default(0)
+  mediaBytes       BigInt  @default(0)
+  updatedAt        DateTime @updatedAt
 
   @@unique([guildId, channelId])
   @@index([guildId])

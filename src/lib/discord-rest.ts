@@ -562,6 +562,29 @@ export async function fetchMessagesAfter(
   return { messages: batch, hasMore: batch.length === 100 };
 }
 
+// One page of channel history OLDER than `before` (or the newest page when
+// `before` is omitted), returned ascending. Used by the archive's backfill
+// pass to walk history from the newest page down to the channel's first
+// message. hasMore=false means we hit the start of the channel.
+export async function fetchMessagesBefore(
+  channelId: string,
+  before?: string
+): Promise<{ messages: DiscordMessageRaw[]; hasMore: boolean }> {
+  const params = new URLSearchParams({ limit: "100" });
+  if (before) params.set("before", before);
+  const res = await discordFetch(
+    `${BASE}/channels/${channelId}/messages?${params.toString()}`,
+    { headers: headers() }
+  );
+  if (!res.ok) {
+    throw new Error(`discord fetchMessagesBefore ${res.status}: ${await res.text()}`);
+  }
+  const batch = (await res.json()) as DiscordMessageRaw[];
+  batch.sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1));
+  await paceFromHeaders(res);
+  return { messages: batch, hasMore: batch.length === 100 };
+}
+
 // Lists members in a guild, paginated. Each page is up to 1000 members; we
 // stop once a short page comes back. Used by the dashboard to count how many
 // people hold each milestone role.

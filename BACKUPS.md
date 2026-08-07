@@ -66,10 +66,12 @@ ARCHIVE_DIR/<guildId>/<channelId>.jsonl   # one raw API message per line
 ARCHIVE_DIR/<guildId>/media/<id>-<name>   # attachment bytes
 ```
 
-- **Incremental**: a per-channel cursor (`ArchiveChannelState`) means each
-  hourly run only fetches new messages. The first run walks all history,
-  bounded to ~30k messages per channel per run; subsequent runs finish the
-  catch-up.
+- **Incremental, two-directional**: each channel keeps a forward cursor
+  (`lastMessageId`) and a backfill cursor (`oldestMessageId`) in
+  `ArchiveChannelState`. Every run pulls new messages *and* walks older history
+  backward toward the channel's first message, until `backfillComplete`.
+  Bounded to ~30k messages per channel per run, so a large channel's history
+  finishes over several runs rather than one.
 - **Crash-safe**: media and JSONL are written before the cursor advances, so
   an interruption re-fetches at most one page.
 - **Storage**: the `archive_data` Docker volume, mounted read-write in the bot

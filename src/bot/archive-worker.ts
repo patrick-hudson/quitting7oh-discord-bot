@@ -20,6 +20,7 @@ import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import {
   fetchMessagesAfter,
+  fetchMessagesBefore,
   listTextChannels,
   type DiscordMessageRaw,
 } from "@/lib/discord-rest";
@@ -156,43 +157,100 @@ async function archiveChannel(
     update: { channelName },
   });
 
-  let cursor = state.lastMessageId ?? undefined;
-  let added = 0;
-  let mediaCount = 0;
-  let mediaBytes = 0n;
-
-  for (let page = 0; page < MAX_PAGES_PER_CHANNEL_PER_TICK; page++) {
-    const { messages, hasMore } = await fetchMessagesAfter(channelId, cursor);
-    if (messages.length === 0) break;
-
-    // Media first, then JSONL, then cursor — so an interrupted run never
-    // advances past content it didn't persist.
+  // Writes a page: media first, then JSONL, then advance the appropriate
+  // cursor(s) — so an interrupted run never records progress past content it
+  // didn't persist. Sets lastMessageId/oldestMessageId from the page bounds
+  // (only when they extend the archived range).
+  const writePage = async (
+    messages: DiscordMessageRaw[],
+    opts: { setLast?: boolean; setOldest?: boolean; backfillComplete?: boolean }
+  ) => {
+    let mediaCount = 0;
+    let mediaBytes = 0n;
     for (const m of messages) {
-      const stats = await archiveAttachments(mediaDirPath, m);
-      mediaCount += stats.count;
-      mediaBytes += BigInt(stats.bytes);
+      const s = await archiveAttachments(mediaDirPath, m);
+      mediaCount += s.count;
+      mediaBytes += BigInt(s.bytes);
     }
-    const lines = messages.map((m) => JSON.stringify(m)).join("\n") + "\n";
-    await appendFile(jsonlPath, lines, "utf8");
-
-    cursor = messages[messages.length - 1].id;
-    added += messages.length;
+    if (messages.length > 0) {
+      await appendFile(
+        jsonlPath,
+        messages.map((m) => JSON.stringify(m)).join("\n") + "\n",
+        "utf8"
+      );
+    }
     await prisma.archiveChannelState.update({
       where: { guildId_channelId: { guildId, channelId } },
       data: {
-        lastMessageId: cursor,
+        ...(opts.setLast && messages.length > 0
+          ? { lastMessageId: messages[messages.length - 1].id }
+          : {}),
+        ...(opts.setOldest && messages.length > 0
+          ? { oldestMessageId: messages[0].id }
+          : {}),
+        ...(opts.backfillComplete ? { backfillComplete: true } : {}),
         archivedCount: { increment: messages.length },
         mediaCount: { increment: mediaCount },
         mediaBytes: { increment: mediaBytes },
       },
     });
-    mediaCount = 0;
-    mediaBytes = 0n;
+  };
 
-    if (!hasMore) break;
+  let added = 0;
+  let pages = 0;
+  const budget = () => pages < MAX_PAGES_PER_CHANNEL_PER_TICK;
+
+  // --- Phase 1: forward — keep up with messages newer than lastMessageId ---
+  if (state.lastMessageId) {
+    let cursor = state.lastMessageId;
+    while (budget()) {
+      pages++;
+      const { messages, hasMore } = await fetchMessagesAfter(channelId, cursor);
+      if (messages.length === 0) break;
+      await writePage(messages, { setLast: true });
+      cursor = messages[messages.length - 1].id;
+      added += messages.length;
+      if (!hasMore) break;
+    }
+  }
+
+  // --- Phase 2: backfill — walk older history down to the channel start ---
+  // Backfill cursor: the oldest archived id, or (for channels stuck on the old
+  // forward-only bug) fall back to lastMessageId so we re-walk backward from
+  // there. undefined → fetch the newest page first (seeds a fresh channel).
+  if (!state.backfillComplete) {
+    let before: string | undefined =
+      state.oldestMessageId ?? state.lastMessageId ?? undefined;
+    // Fresh channel with no cursors at all: the first backward page (no
+    // `before`) is the newest page and also seeds lastMessageId.
+    const seeding = !state.lastMessageId && !state.oldestMessageId;
+    while (budget()) {
+      pages++;
+      const { messages, hasMore } = await fetchMessagesBefore(channelId, before);
+      if (messages.length === 0) {
+        await markBackfillComplete(guildId, channelId);
+        break;
+      }
+      await writePage(messages, {
+        setOldest: true,
+        // On the seed page of a brand-new channel, also set the forward cursor.
+        setLast: seeding && pages === 1,
+        backfillComplete: !hasMore,
+      });
+      before = messages[0].id;
+      added += messages.length;
+      if (!hasMore) break; // reached the channel's first message
+    }
   }
 
   return added;
+}
+
+async function markBackfillComplete(guildId: string, channelId: string) {
+  await prisma.archiveChannelState.update({
+    where: { guildId_channelId: { guildId, channelId } },
+    data: { backfillComplete: true },
+  });
 }
 
 async function archiveAttachments(
