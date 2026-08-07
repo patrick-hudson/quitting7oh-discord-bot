@@ -32,6 +32,7 @@ export default async function EditPostPage({
     embedImage: post.embedImage ?? "",
     mentionRoleId: post.mentionRoleId ?? "",
     leadMinutes: post.leadMinutes,
+    skipIfRecentWithin: post.skipIfRecentWithin,
     reminderMinutes: post.reminderMinutes,
     reminderContent: post.reminderContent ?? "",
     active: post.active,

@@ -28,6 +28,9 @@ export type PostFormValues = {
   embedImage: string;
   mentionRoleId: string;
   leadMinutes: number;
+  // Anti-spam: skip a scheduled fire if the last post is still within the
+  // channel's most recent N messages. null = always post.
+  skipIfRecentWithin: number | null;
   // Reminder follow-up sent as a plain-text reply to the original message.
   // null = off. Must be 1..(leadMinutes - 1) when set.
   reminderMinutes: number | null;
@@ -71,6 +74,7 @@ export function PostForm({
     embedImage: "",
     mentionRoleId: "",
     leadMinutes: 0,
+    skipIfRecentWithin: null,
     reminderMinutes: null,
     reminderContent: "",
     active: true,
@@ -330,6 +334,45 @@ export function PostForm({
               className={inputClass}
             />
           </Field>
+        )}
+
+        {values.scheduleKind === "cron" && (
+          <div className="rounded-lg bg-white/[0.03] px-3 py-2 ring-1 ring-white/5">
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={values.skipIfRecentWithin !== null}
+                onChange={(e) =>
+                  set("skipIfRecentWithin", e.target.checked ? 25 : null)
+                }
+              />
+              Skip if still in recent messages
+            </label>
+            {values.skipIfRecentWithin !== null && (
+              <div className="mt-2 flex items-center gap-2 text-sm">
+                <span className="text-white/60">Don&apos;t repost if it&apos;s within the last</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={100}
+                  value={values.skipIfRecentWithin}
+                  onChange={(e) =>
+                    set(
+                      "skipIfRecentWithin",
+                      Math.min(100, Math.max(1, Number(e.target.value) || 1))
+                    )
+                  }
+                  className={`${inputClass} w-20`}
+                />
+                <span className="text-white/60">messages of the channel.</span>
+              </div>
+            )}
+            <p className="mt-1 text-xs text-white/40">
+              For repetitive posts (like a scam warning) in quiet channels — the
+              scheduled post is skipped while the previous one is still on screen.
+              &quot;Fire now&quot; always posts regardless.
+            </p>
+          </div>
         )}
       </Section>
 

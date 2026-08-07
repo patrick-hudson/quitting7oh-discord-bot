@@ -19,6 +19,9 @@ export const postSchema = z
     embedImage: z.string().url().optional().or(z.literal("")),
     mentionRoleId: z.string().regex(/^\d{17,21}$/).optional().or(z.literal("")),
     leadMinutes: z.number().int().min(0).max(1440).default(0),
+    // Anti-spam: skip a scheduled fire if this post's last message is still
+    // within the channel's most recent N messages. null = always post.
+    skipIfRecentWithin: z.number().int().min(1).max(100).nullable().default(null),
     // Reminder follow-up. null = off. When set, must be in [1, leadMinutes-1]
     // (see superRefine below — Zod can't express cross-field constraints inline).
     reminderMinutes: z.number().int().min(1).max(1439).nullable().default(null),

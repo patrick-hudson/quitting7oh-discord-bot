@@ -165,6 +165,14 @@ model ScheduledPost {
   // Used to resolve {meetingTime} placeholders in the body.
   leadMinutes Int @default(0)
 
+  // Anti-spam for repetitive posts (e.g. a scam warning on a cron): when set,
+  // a SCHEDULED fire skips a channel if this post's previous message is still
+  // within the channel's last N messages. null/0 = always post. Manual "Fire
+  // now" ignores this. lastMessageIds maps channelId → the message id of the
+  // most recent successful send there, used for the scrollback check.
+  skipIfRecentWithin Int?
+  lastMessageIds     Json?
+
   // Optional follow-up reminder. If set, the bot replies to each original
   // message N minutes before the meeting with a plain-text nudge. Must be
   // 1..(leadMinutes - 1) — validated at the form/API layer. null = off.

@@ -47,6 +47,7 @@ const configSchema = z.object({
       embedImage: z.string().nullable(),
       mentionRoleId: snowflake.nullable(),
       leadMinutes: z.number().int().min(0).max(1440),
+      skipIfRecentWithin: z.number().int().min(1).max(100).nullable().optional(),
       reminderMinutes: z.number().int().min(1).max(1439).nullable(),
       reminderContent: z.string().nullable(),
       active: z.boolean(),
@@ -130,6 +131,7 @@ export const POST = withErrors(async (
         embedImage: p.embedImage,
         mentionRoleId: p.mentionRoleId,
         leadMinutes: p.leadMinutes,
+        skipIfRecentWithin: p.skipIfRecentWithin ?? null,
         reminderMinutes: p.reminderMinutes,
         reminderContent: p.reminderContent,
         // Imported inactive regardless of source state; the active toggle

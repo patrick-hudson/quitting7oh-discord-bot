@@ -19,6 +19,8 @@ import { REMINDER_TEMPLATES } from "@/lib/reminder-templates";
 import { substituteAnsiColorTokens } from "@/lib/ansi-tokens";
 import { audit } from "@/lib/audit";
 import { takeGuildSnapshot } from "@/lib/guild-snapshot";
+import { fetchRecentMessageIds } from "@/lib/discord-rest";
+import type { Prisma } from "@prisma/client";
 import type { PostReminder, ScheduledPost } from "@prisma/client";
 
 // Pick a random reminder template, avoiding the index used last time for this
@@ -148,11 +150,27 @@ async function fireDuePosts(client: Client) {
   for (const post of due) {
     try {
       const sent = await sendPost(client, post);
-      await advancePost(post, post.guild.timezone);
+      await advancePost(post, post.guild.timezone, sent.lastMessageIds);
+      if (sent.messages.length === 0 && sent.skipped.length > 0) {
+        // Entirely skipped for recency — advance the schedule quietly, log as
+        // an ok-status audit row so it's visible but not alarming.
+        audit(
+          post.guildId,
+          "post.skipped_recent",
+          `Skipped "${post.name}" — still within the last ${post.skipIfRecentWithin} messages`,
+          {
+            postId: post.id,
+            postName: post.name,
+            skippedChannels: sent.skipped,
+          }
+        );
+        continue;
+      }
       audit(
         post.guildId,
         "post.fired",
-        `Fired "${post.name}" to ${sent.messages.length}/${post.channelIds.length} channel(s)`,
+        `Fired "${post.name}" to ${sent.messages.length}/${post.channelIds.length} channel(s)` +
+          (sent.skipped.length > 0 ? `, ${sent.skipped.length} skipped for recency` : ""),
         {
           postId: post.id,
           postName: post.name,
@@ -160,6 +178,7 @@ async function fireDuePosts(client: Client) {
           meetingAt: sent.meetingAt.toISOString(),
           messages: sent.messages,
           failures: sent.failures,
+          skippedChannels: sent.skipped,
         },
         sent.failures.length > 0 ? "warn" : "ok"
       );
@@ -205,10 +224,17 @@ async function fireManualRequests(client: Client) {
 
   for (const post of due) {
     try {
-      const sent = await sendPost(client, post);
+      // respectRecency=false: an explicit "Fire now" always posts. Still
+      // record the new message ids so the next scheduled fire's scrollback
+      // check sees this manual post.
+      const sent = await sendPost(client, post, false);
       await prisma.scheduledPost.update({
         where: { id: post.id },
-        data: { manualFireRequested: false, lastFiredAt: new Date() },
+        data: {
+          manualFireRequested: false,
+          lastFiredAt: new Date(),
+          lastMessageIds: sent.lastMessageIds as Prisma.InputJsonValue,
+        },
       });
       audit(
         post.guildId,
@@ -459,12 +485,25 @@ function substituteChannelMentions(
 
 async function sendPost(
   client: Client,
-  post: ScheduledPost & { guild: { timezone: string } }
+  post: ScheduledPost & { guild: { timezone: string } },
+  // Scheduled fires honor skipIfRecentWithin; manual "Fire now" passes false
+  // so an explicit admin click always posts.
+  respectRecency = true
 ): Promise<{
   meetingAt: Date;
   messages: Array<{ channelId: string; messageId: string }>;
   failures: string[];
+  skipped: string[];
+  lastMessageIds: Record<string, string>;
 }> {
+  // Prior per-channel message ids (JSON map) — used both for the scrollback
+  // check and to carry forward ids for channels we skip this fire.
+  const priorIds: Record<string, string> =
+    post.lastMessageIds && typeof post.lastMessageIds === "object"
+      ? (post.lastMessageIds as Record<string, string>)
+      : {};
+  const skipWithin = respectRecency ? (post.skipIfRecentWithin ?? 0) : 0;
+
   const mention = post.mentionRoleId ? `<@&${post.mentionRoleId}>` : "";
   const allowedMentions = post.mentionRoleId
     ? { roles: [post.mentionRoleId] }
@@ -513,6 +552,10 @@ async function sendPost(
   // messages we posted (channel + message snowflake).
   const messages: Array<{ channelId: string; messageId: string }> = [];
   const failures: string[] = [];
+  const skipped: string[] = [];
+  // Start from prior ids so skipped/failed channels keep their last id for the
+  // next scrollback check; sent channels overwrite theirs below.
+  const lastMessageIds: Record<string, string> = { ...priorIds };
   await Promise.all(
     post.channelIds.map(async (channelId) => {
       try {
@@ -520,8 +563,26 @@ async function sendPost(
         if (!channel || !channel.isTextBased() || !("send" in channel)) {
           throw new Error("not a sendable text channel");
         }
+        // Recency skip: if this post's previous message here is still within
+        // the last N messages, don't repost. A failed fetch falls through to
+        // posting (better a possible dupe than a silent gap).
+        if (skipWithin > 0 && priorIds[channelId]) {
+          try {
+            const recent = await fetchRecentMessageIds(channelId, skipWithin);
+            if (recent.has(priorIds[channelId])) {
+              skipped.push(channelId);
+              return;
+            }
+          } catch (err) {
+            console.warn(
+              `[scheduler] recency check failed for ${channelId}, posting anyway:`,
+              err
+            );
+          }
+        }
         const msg = await channel.send(payload);
         messages.push({ channelId, messageId: msg.id });
+        lastMessageIds[channelId] = msg.id;
       } catch (err) {
         failures.push(`${channelId}: ${(err as Error).message}`);
       }
@@ -535,6 +596,13 @@ async function sendPost(
     );
   }
 
+  // Every channel was skipped for recency — a clean "nothing to do", not a
+  // failure. Return without throwing so the post still advances its schedule.
+  if (messages.length === 0 && skipped.length > 0 && failures.length === 0) {
+    console.log(`[scheduler] "${post.name}" skipped — still in recent scrollback`);
+    return { meetingAt: meetingTime, messages, failures, skipped, lastMessageIds };
+  }
+
   // If every channel failed, throw so the outer handler schedules a retry. If
   // at least one succeeded, swallow the partial failure and advance the post
   // so successful channels don't get duplicate sends on the retry tick.
@@ -543,13 +611,18 @@ async function sendPost(
   }
 
   console.log(
-    `[scheduler] sent "${post.name}" to ${messages.length}/${post.channelIds.length} channels`
+    `[scheduler] sent "${post.name}" to ${messages.length}/${post.channelIds.length} channels` +
+      (skipped.length > 0 ? ` (${skipped.length} skipped for recency)` : "")
   );
 
-  return { meetingAt: meetingTime, messages, failures };
+  return { meetingAt: meetingTime, messages, failures, skipped, lastMessageIds };
 }
 
-async function advancePost(post: ScheduledPost, guildTimezone: string) {
+async function advancePost(
+  post: ScheduledPost,
+  guildTimezone: string,
+  lastMessageIds?: Record<string, string>
+) {
   const next = computeNextFireAt({
     cron: post.cron,
     runAt: post.runAt,
@@ -564,6 +637,9 @@ async function advancePost(post: ScheduledPost, guildTimezone: string) {
       // past — deactivate so we don't keep selecting it.
       active: next !== null || post.cron !== null,
       nextFireAt: next,
+      ...(lastMessageIds
+        ? { lastMessageIds: lastMessageIds as Prisma.InputJsonValue }
+        : {}),
     },
   });
 }

@@ -512,6 +512,25 @@ export class ScanAbortedError extends Error {
   }
 }
 
+// The ids of a channel's most recent `limit` messages (newest first). Used by
+// the "skip if still in recent scrollback" post option. Capped at 100 (one
+// page) — the option is about very-recent visibility, not deep history.
+export async function fetchRecentMessageIds(
+  channelId: string,
+  limit: number
+): Promise<Set<string>> {
+  const capped = Math.min(Math.max(limit, 1), 100);
+  const res = await discordFetch(
+    `${BASE}/channels/${channelId}/messages?limit=${capped}`,
+    { headers: headers() }
+  );
+  if (!res.ok) {
+    throw new Error(`discord fetchRecentMessageIds ${res.status}: ${await res.text()}`);
+  }
+  const batch = (await res.json()) as Array<{ id: string }>;
+  return new Set(batch.map((m) => m.id));
+}
+
 // One forward page of channel history for the incremental archive: messages
 // strictly AFTER `after` (or from the very beginning when omitted), returned
 // ascending. Discord's ordering with the `after` cursor isn't worth trusting —
