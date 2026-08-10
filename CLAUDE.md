@@ -2,6 +2,29 @@
 
 Project-level instructions and pitfalls for Claude Code working in this repo.
 
+## Timezone-aware timestamps
+
+The server runs in UTC (Docker), so any date formatted in a server component
+renders in UTC. Show viewer-local times with `<LocalTime iso={...} />`
+([src/components/LocalTime.tsx](src/components/LocalTime.tsx)), never a raw
+`toLocaleString()` in server-rendered output.
+
+`LocalTime`'s implementation is deliberate — don't "simplify" it. The naive
+approaches DON'T work and cost real debugging time:
+
+- With `suppressHydrationWarning`, React keeps the server's UTC DOM text but
+  stores the *client* value in its vdom. If the client render computes local
+  directly, later renders also compute local → matches vdom → React never
+  patches the stale UTC DOM. A post-mount `setState` doesn't help if the text
+  value it produces is the one React already recorded.
+- The working pattern: render a **deterministic UTC** value pre-mount (server
+  and first client render agree, vdom == DOM), then switch to local after a
+  `mounted` flag flips. Only then does the vdom text actually change (UTC →
+  local) and force a DOM patch.
+
+Not a Cloudflare / caching issue — it's pure client hydration, and reproduces
+locally on a hard refresh.
+
 ## Dependency management
 
 After anything that changes `package.json` (adding deps, running `shadcn add`,
