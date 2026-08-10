@@ -6,6 +6,7 @@
 // refresh.
 
 import { useCallback, useEffect, useState } from "react";
+import { LocalTime } from "@/components/LocalTime";
 
 type Channel = { id: string; name: string };
 
@@ -213,7 +214,7 @@ export function UserExportForm({
                 <div className="min-w-0 flex-1 text-sm">
                   <span className="font-mono text-white/80">{j.targetUserId}</span>
                   <span className="ml-2 text-xs text-white/40">
-                    {new Date(j.createdAt).toLocaleString()}
+                    <LocalTime iso={new Date(j.createdAt).toISOString()} />
                     {j.status === "done" && ` · ${j.matchedCount} message(s)`}
                     {j.status === "failed" && j.error && ` · ${j.error.slice(0, 120)}`}
                   </span>

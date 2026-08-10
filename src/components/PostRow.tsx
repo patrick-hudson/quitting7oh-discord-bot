@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import { LocalTime } from "@/components/LocalTime";
 
 type Post = {
   id: string;
@@ -122,18 +123,18 @@ export function PostRow({
               {post.timezone && <span className="ml-2">({post.timezone})</span>}
             </>
           ) : post.runAt ? (
-            <>One-off: {new Date(post.runAt).toLocaleString()}</>
+            <>One-off: <LocalTime iso={new Date(post.runAt).toISOString()} /></>
           ) : (
             <>No schedule set</>
           )}
           {post.nextFireAt && (
             <span className="ml-3 text-white/70">
-              · next {new Date(post.nextFireAt).toLocaleString()}
+              · next <LocalTime iso={new Date(post.nextFireAt).toISOString()} />
             </span>
           )}
           {post.lastFiredAt && (
             <span className="ml-3 text-white/40">
-              · last {new Date(post.lastFiredAt).toLocaleString()}
+              · last <LocalTime iso={new Date(post.lastFiredAt).toISOString()} />
             </span>
           )}
         </div>
