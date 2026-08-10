@@ -133,6 +133,8 @@ model MessageEvent {
   sentAt    DateTime
 
   @@index([guildId, sentAt])
+  // Speeds up the contributor leaderboard's group-by-author aggregate.
+  @@index([guildId, authorId])
 }
 
 // A scheduled message. Either `cron` (recurring) or `runAt` (one-off) is set,
