@@ -23,6 +23,7 @@ import { runUserExportWorker } from "./user-export-worker";
 import { runArchiveWorker } from "./archive-worker";
 import { runRestoreWorker } from "./restore-worker";
 import { runSnapshotWorker } from "./snapshot-worker";
+import { runLeaderboardWorker } from "./leaderboard-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -113,6 +114,7 @@ async function main() {
     runArchiveWorker();
     runRestoreWorker();
     runSnapshotWorker();
+    runLeaderboardWorker();
   });
 
   client.on(Events.GuildCreate, async (g) => {

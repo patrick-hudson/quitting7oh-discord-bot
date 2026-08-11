@@ -451,6 +451,19 @@ model RestoreJob {
   @@index([status, createdAt])
 }
 
+// Precomputed contributor leaderboard, one row per guild. Recomputed on a
+// schedule by the leaderboard worker (the aggregate + Discord name lookups are
+// too slow to run per page load). `data` holds the finished rows + channel-name
+// map so the page is a pure read with zero Discord calls.
+model LeaderboardCache {
+  guildId          String    @id
+  data             Json      @default("{}")
+  generatedAt      DateTime?
+  computing        Boolean   @default(false)
+  refreshRequested Boolean   @default(false)
+  updatedAt        DateTime  @updatedAt
+}
+
 // --- Auth.js (NextAuth v5) tables ---
 // Standard Prisma adapter schema; lets users sign in via Discord OAuth.
 
