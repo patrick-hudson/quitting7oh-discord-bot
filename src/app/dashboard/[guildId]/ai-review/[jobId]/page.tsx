@@ -11,6 +11,7 @@ import { LocalTime } from "@/components/LocalTime";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { AiReviewButton } from "@/components/AiReviewControls";
 import { CopyButton } from "@/components/CopyButton";
+import { RedactedShare } from "@/components/RedactedShare";
 import { RECO, CONFIDENCE_LABEL } from "@/components/ai-review-meta";
 import type { AiVerdict } from "@/lib/ai-review";
 import type { AiReviewJob } from "@prisma/client";
@@ -107,6 +108,19 @@ export default async function AiReviewDetailPage({
               />
             )}
           </div>
+
+          {(() => {
+            const v = job.verdict as unknown as AiVerdict | null;
+            return v ? (
+              <RedactedShare
+                verdict={v}
+                targetName={job.targetName}
+                targetUserId={job.targetUserId}
+                finishedAt={job.finishedAt?.toISOString().slice(0, 10) ?? null}
+                messagesAnalyzed={job.messagesAnalyzed}
+              />
+            ) : null;
+          })()}
 
           {others.length > 0 && (
             <div className="mt-8 rounded-xl bg-white/[0.02] p-4 ring-1 ring-white/10">
