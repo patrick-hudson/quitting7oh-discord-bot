@@ -331,27 +331,44 @@ export async function generateReview(
 
   let inputTokens = 0;
   let outputTokens = 0;
-  let verdict: AiVerdict;
+  let verdict: AiVerdict | null = null;
 
   if (totalChars <= budgetChars) {
     // --- Single pass: whole history fits, straight to the verdict model. ---
-    const user = `${header}\n\n--- MESSAGES (chronological) ---\n${transcript.join(
-      "\n"
-    )}`;
-    const res = await callTool(client, {
-      model: env.aiReviewModel(),
-      system: input.systemPrompt,
-      user,
-      tool: VERDICT_TOOL,
-      maxTokens: 3200,
-    });
-    verdict = normalizeVerdict(res.input);
-    inputTokens += res.inputTokens;
-    outputTokens += res.outputTokens;
-  } else {
+    // The chars→tokens estimate can still undershoot on unusual text; if the
+    // API says the prompt is over the model's limit, fall through to the
+    // map-reduce path instead of failing the review.
+    try {
+      const user = `${header}\n\n--- MESSAGES (chronological) ---\n${transcript.join(
+        "\n"
+      )}`;
+      const res = await callTool(client, {
+        model: env.aiReviewModel(),
+        system: input.systemPrompt,
+        user,
+        tool: VERDICT_TOOL,
+        maxTokens: 3200,
+      });
+      verdict = normalizeVerdict(res.input);
+      inputTokens += res.inputTokens;
+      outputTokens += res.outputTokens;
+    } catch (err) {
+      if (!isPromptTooLongError(err)) throw err;
+      console.warn(
+        "[ai-review] single pass rejected as too long — falling back to map-reduce"
+      );
+    }
+  }
+
+  if (!verdict) {
     // --- Map-reduce: chunk chronologically, extract signals cheaply, then
     //     synthesize once with the verdict model. ---
-    const chunks = chunkLines(transcript, budgetChars);
+    // When we got here via the too-long fallback (totalChars <= budgetChars),
+    // halve the chunk budget so the transcript actually splits — reusing the
+    // full budget would produce one chunk with the exact same problem.
+    const chunkBudget =
+      totalChars <= budgetChars ? Math.ceil(budgetChars / 2) : budgetChars;
+    const chunks = chunkLines(transcript, chunkBudget);
     const segments: string[] = [];
     for (let i = 0; i < chunks.length; i++) {
       const res = await callTool(client, {
@@ -400,7 +417,14 @@ export async function generateReview(
 type GatheredMessage = { ts: number; channel: string; content: string };
 type Gathered = { messages: GatheredMessage[]; source: "archive" | "scan" };
 
-const APPROX_CHARS_PER_TOKEN = 4;
+// Deliberately conservative. The old "~4 chars/token" rule of thumb undercounts
+// on current-generation tokenizers (Sonnet 5's produces ~30% more tokens than
+// its predecessors), and real Discord text has measured ~2.9 chars/token —
+// which is how a "150k-token" transcript once hit the API as 204k tokens and
+// 400'd with "prompt is too long". At 3 chars/token the 150k-token budget maps
+// to ~450k chars ≈ ~155k real tokens, safely under every model's limit; the
+// single-pass → map-reduce fallback in generateReview covers any outliers.
+const APPROX_CHARS_PER_TOKEN = 3;
 const MAX_MSG_CHARS = 2000; // truncate any single monster message
 
 async function gatherMessages(input: GenerateReviewInput): Promise<Gathered> {
@@ -557,6 +581,16 @@ function chunkLines(lines: string[], budgetChars: number): string[][] {
 // ---------------------------------------------------------------------------
 // Model plumbing
 // ---------------------------------------------------------------------------
+
+// The API rejects over-limit prompts with a 400 like:
+//   "prompt is too long: 204534 tokens > 200000 maximum"
+// Detected so generateReview can fall back to map-reduce instead of failing.
+function isPromptTooLongError(err: unknown): boolean {
+  return (
+    err instanceof Anthropic.BadRequestError &&
+    /prompt is too long/i.test(err.message)
+  );
+}
 
 async function callTool(
   client: Anthropic,

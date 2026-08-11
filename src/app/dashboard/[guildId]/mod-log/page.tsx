@@ -73,7 +73,7 @@ export default async function ModLogPage({
       : null;
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-7xl">
       <h1 className="text-2xl font-semibold tracking-tight">Moderation log</h1>
       <p className="mt-1 text-sm text-white/60">
         Actions taken by moderators — bans, kicks, timeouts, and message
