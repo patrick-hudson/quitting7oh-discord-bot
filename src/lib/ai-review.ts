@@ -513,22 +513,35 @@ async function callTool(
   };
 }
 
+// Fields are typed loose on purpose — this is unvalidated model output. The
+// tool schema asks for arrays of objects, but models occasionally return a
+// scalar or a differently-shaped value, so formatSegment coerces everything.
 type SignalsInput = {
-  observations?: string;
-  quotes?: Array<{ text?: string; note?: string }>;
-  redFlags?: string[];
-  crisisSignals?: boolean;
+  observations?: unknown;
+  quotes?: unknown;
+  redFlags?: unknown;
+  crisisSignals?: unknown;
 };
 
 function formatSegment(n: number, s: SignalsInput): string {
-  const quotes = (s.quotes ?? [])
-    .map((q) => `  - "${q.text ?? ""}"${q.note ? ` — ${q.note}` : ""}`)
+  // Coerce defensively so one odd segment can't sink the whole review with
+  // ".map is not a function".
+  const quoteList = Array.isArray(s.quotes) ? s.quotes : [];
+  const flagList = Array.isArray(s.redFlags) ? s.redFlags : [];
+  const quotes = quoteList
+    .map((q) => {
+      const o = q as { text?: unknown; note?: unknown } | null;
+      const text = typeof q === "string" ? q : String(o?.text ?? "");
+      const note = o && typeof o === "object" && o.note ? ` — ${String(o.note)}` : "";
+      return `  - "${text}"${note}`;
+    })
     .join("\n");
-  const flags = (s.redFlags ?? []).length
-    ? `\nRed flags: ${(s.redFlags ?? []).join("; ")}`
+  const flags = flagList.length
+    ? `\nRed flags: ${flagList.map((f) => String(f)).join("; ")}`
     : "";
   const crisis = s.crisisSignals ? "\nCrisis signals: yes" : "";
-  return `## Segment ${n}\n${s.observations ?? ""}${
+  const observations = typeof s.observations === "string" ? s.observations : "";
+  return `## Segment ${n}\n${observations}${
     quotes ? `\nNotable quotes:\n${quotes}` : ""
   }${flags}${crisis}`;
 }

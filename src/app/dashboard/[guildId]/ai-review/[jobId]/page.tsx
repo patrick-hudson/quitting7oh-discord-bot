@@ -9,6 +9,7 @@ import { prisma } from "@/lib/db";
 import { requireGuildAccess } from "@/lib/authz";
 import { LocalTime } from "@/components/LocalTime";
 import { AutoRefresh } from "@/components/AutoRefresh";
+import { AiReviewButton } from "@/components/AiReviewControls";
 import { RECO, CONFIDENCE_LABEL } from "@/components/ai-review-meta";
 import type { AiVerdict } from "@/lib/ai-review";
 import type { AiReviewJob } from "@prisma/client";
@@ -60,10 +61,23 @@ export default async function AiReviewDetailPage({
         </span>
       </div>
 
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-        {job.targetName ?? job.targetUserId}
-      </h1>
-      <p className="mt-0.5 font-mono text-xs text-white/40">{job.targetUserId}</p>
+      <div className="mt-3 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            {job.targetName ?? job.targetUserId}
+          </h1>
+          <p className="mt-0.5 font-mono text-xs text-white/40">{job.targetUserId}</p>
+        </div>
+        {!inProgress && (
+          <AiReviewButton
+            className="shrink-0"
+            guildId={guildId}
+            targetUserId={job.targetUserId}
+            targetName={job.targetName}
+            label="Re-run review"
+          />
+        )}
+      </div>
 
       {inProgress && (
         <div className="mt-8 rounded-2xl border border-dashed border-white/10 p-10 text-center text-white/60">

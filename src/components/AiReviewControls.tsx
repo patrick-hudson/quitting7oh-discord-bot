@@ -34,11 +34,13 @@ export function AiReviewButton({
   targetUserId,
   targetName,
   className,
+  label = "Run AI fit review",
 }: {
   guildId: string;
   targetUserId: string;
   targetName?: string | null;
   className?: string;
+  label?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -70,7 +72,7 @@ export function AiReviewButton({
         }}
         className="rounded-md bg-[color:var(--color-brand-600)]/90 px-2.5 py-1 text-xs font-medium text-white ring-1 ring-transparent hover:bg-[color:var(--color-brand-600)] disabled:opacity-60"
       >
-        {busy ? "Queuing…" : "Run AI fit review"}
+        {busy ? "Queuing…" : label}
       </button>
       {error && <p className="mt-1 text-[11px] text-red-300">{error}</p>}
     </div>
