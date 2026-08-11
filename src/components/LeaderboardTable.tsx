@@ -72,7 +72,7 @@ export function LeaderboardTable({
       <table className="w-full text-left text-sm">
         <thead className="bg-white/[0.03] text-xs uppercase tracking-wide text-white/50">
           <tr>
-            <th className="px-3 py-2 font-medium">#</th>
+            <th className="w-12 px-3 py-2 font-medium">#</th>
             <th className="px-3 py-2 font-medium">Member</th>
             {columns.map((c) => (
               <th key={c.key} className="px-3 py-2 font-medium" title={c.hint}>
@@ -98,11 +98,17 @@ export function LeaderboardTable({
                   className="cursor-pointer bg-white/[0.02] hover:bg-white/[0.04]"
                   onClick={() => void toggle(r.authorId)}
                 >
-                  <td className="px-3 py-2 text-white/40">
-                    <span className="mr-1 inline-block w-3 text-white/30">
-                      {open ? "▾" : "▸"}
+                  <td className="w-12 whitespace-nowrap px-3 py-2 text-white/40">
+                    {/* inline-flex + gap (not a text-node space) keeps the
+                        caret and rank on one line — a breaking space here let
+                        two-digit ranks wrap the number onto a second line when
+                        the row grew tall. */}
+                    <span className="inline-flex items-baseline gap-1">
+                      <span className="w-3 shrink-0 text-white/30">
+                        {open ? "▾" : "▸"}
+                      </span>
+                      <span className="tabular-nums">{i + 1}</span>
                     </span>
-                    {i + 1}
                   </td>
                   <td className="px-3 py-2">
                     {r.name ? (
