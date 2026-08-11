@@ -15,6 +15,8 @@
 // skipped (the JSONL still has the metadata).
 
 import { mkdir, appendFile, writeFile } from "node:fs/promises";
+import { createReadStream, existsSync } from "node:fs";
+import readline from "node:readline";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
@@ -157,6 +159,26 @@ async function archiveChannel(
     update: { channelName },
   });
 
+  // One-time: feed MessageEvent from any JSONL already on disk (messages
+  // archived before MessageEvent-feeding existed). Idempotent via
+  // skipDuplicates; gated by eventsBackfilledAt so it runs once per channel.
+  if (!state.eventsBackfilledAt && existsSync(jsonlPath)) {
+    try {
+      const inserted = await reconcileEventsFromFile(guildId, channelId, jsonlPath);
+      await prisma.archiveChannelState.update({
+        where: { guildId_channelId: { guildId, channelId } },
+        data: { eventsBackfilledAt: new Date() },
+      });
+      if (inserted > 0) {
+        console.log(
+          `[archive] reconciled ${inserted} MessageEvent row(s) from #${channelName}'s archive`
+        );
+      }
+    } catch (err) {
+      console.warn(`[archive] event reconcile failed for ${channelId}:`, err);
+    }
+  }
+
   // Writes a page: media first, then JSONL, then advance the appropriate
   // cursor(s) — so an interrupted run never records progress past content it
   // didn't persist. Sets lastMessageId/oldestMessageId from the page bounds
@@ -270,6 +292,59 @@ async function markBackfillComplete(guildId: string, channelId: string) {
     where: { guildId_channelId: { guildId, channelId } },
     data: { backfillComplete: true },
   });
+}
+
+// Streams a channel's JSONL and inserts a MessageEvent row per line (batched,
+// skipDuplicates). Used once per channel to reconcile already-archived history
+// into the activity index. Returns how many rows the DB reported inserting.
+async function reconcileEventsFromFile(
+  guildId: string,
+  channelId: string,
+  jsonlPath: string
+): Promise<number> {
+  const rl = readline.createInterface({
+    input: createReadStream(jsonlPath, "utf8"),
+    crlfDelay: Infinity,
+  });
+  let batch: Array<{
+    id: string;
+    guildId: string;
+    channelId: string;
+    authorId: string;
+    isBot: boolean;
+    sentAt: Date;
+  }> = [];
+  let inserted = 0;
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const res = await prisma.messageEvent.createMany({
+      data: batch,
+      skipDuplicates: true,
+    });
+    inserted += res.count;
+    batch = [];
+  };
+
+  for await (const line of rl) {
+    if (!line.trim()) continue;
+    try {
+      const m = JSON.parse(line) as DiscordMessageRaw;
+      if (!m.id || !m.author?.id || !m.timestamp) continue;
+      batch.push({
+        id: m.id,
+        guildId,
+        channelId,
+        authorId: m.author.id,
+        isBot: Boolean(m.author.bot),
+        sentAt: new Date(m.timestamp),
+      });
+      if (batch.length >= 1000) await flush();
+    } catch {
+      // skip malformed line
+    }
+  }
+  await flush();
+  return inserted;
 }
 
 async function archiveAttachments(

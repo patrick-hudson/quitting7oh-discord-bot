@@ -415,7 +415,11 @@ model ArchiveChannelState {
   archivedCount    Int     @default(0)
   mediaCount       Int     @default(0)
   mediaBytes       BigInt  @default(0)
-  updatedAt        DateTime @updatedAt
+  // When the already-on-disk JSONL was reconciled into MessageEvent (one-time,
+  // covers messages archived before MessageEvent-feeding existed). null = not
+  // yet done.
+  eventsBackfilledAt DateTime?
+  updatedAt          DateTime @updatedAt
 
   @@unique([guildId, channelId])
   @@index([guildId])
