@@ -3,10 +3,15 @@
 // no content). Built to spot who to promote: volume, consistency, breadth,
 // recency, and tenure at a glance. Names/roles are resolved live from Discord.
 
-import Link from "next/link";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
-import { listGuildMembers, listRoles } from "@/lib/discord-rest";
-import { LocalTime } from "@/components/LocalTime";
+import {
+  getUser,
+  listGuildMembers,
+  listRoles,
+  listTextChannels,
+} from "@/lib/discord-rest";
+import { LeaderboardTable } from "@/components/LeaderboardTable";
 
 type Row = {
   authorId: string;
@@ -77,10 +82,14 @@ export default async function LeaderboardPage({
 
   // Resolve names + current roles from Discord (best effort). Members who left
   // won't be here — we show their id and mark them.
-  const [members, roles] = await Promise.all([
+  const [members, roles, channels] = await Promise.all([
     listGuildMembers(guildId).catch(() => []),
     listRoles(guildId).catch(() => []),
+    listTextChannels(guildId).catch(() => []),
   ]);
+  const channelName: Record<string, string> = Object.fromEntries(
+    channels.map((c) => [c.id, c.name])
+  );
   const roleName = new Map(roles.map((r) => [r.id, r.name]));
   const memberById = new Map(
     members.map((m) => [
@@ -93,13 +102,73 @@ export default async function LeaderboardPage({
     ])
   );
 
+  // For posters who have since left the server, recover their last-known name
+  // from snapshots — each snapshot stored every member's nick + username, so a
+  // departed user still appears in snapshots taken before they left. One query
+  // picks each id's name from the most recent snapshot that still had them.
+  const unresolvedIds = rows
+    .map((r) => r.authorId)
+    .filter((id) => !memberById.has(id));
+  const lastKnownName = new Map<string, string>();
+  if (unresolvedIds.length > 0) {
+    try {
+      const nameRows = await prisma.$queryRaw<{ id: string; name: string }[]>`
+        SELECT DISTINCT ON (m->>'id')
+          m->>'id' AS id,
+          COALESCE(NULLIF(m->>'nick', ''), m->>'username') AS name
+        FROM "GuildSnapshot" s,
+          jsonb_array_elements(COALESCE(s.data->'members', '[]'::jsonb)) m
+        WHERE s."guildId" = ${guildId}
+          AND m->>'id' IN (${Prisma.join(unresolvedIds)})
+        ORDER BY m->>'id', s."createdAt" DESC
+      `;
+      for (const r of nameRows) if (r.name) lastKnownName.set(r.id, r.name);
+    } catch {
+      // snapshots may not exist yet — fall through to the API lookup below
+    }
+  }
+
+  // Still-unresolved ids (not in a snapshot either): last resort, ask Discord
+  // for the account username via GET /users/{id} — works even for people who
+  // left. Bounded + parallel so a long tail of departed posters doesn't stall
+  // the page; anything still unresolved falls back to the raw id.
+  const stillUnknown = unresolvedIds
+    .filter((id) => !lastKnownName.has(id))
+    .slice(0, 40);
+  if (stillUnknown.length > 0) {
+    const fetched = await Promise.all(
+      stillUnknown.map(async (id) => {
+        const u = await getUser(id);
+        return [id, u ? u.global_name || u.username : null] as const;
+      })
+    );
+    for (const [id, name] of fetched) if (name) lastKnownName.set(id, name);
+  }
+
   const now = Date.now();
   const enriched = rows.map((r) => {
     const first = new Date(r.firstSeen).getTime();
     const tenureDays = Math.max(1, Math.round((now - first) / 86_400_000));
     const consistency = Math.min(100, Math.round((r.activeDays / tenureDays) * 100));
     const m = memberById.get(r.authorId);
-    return { ...r, tenureDays, consistency, member: m ?? null };
+    return {
+      authorId: r.authorId,
+      // Resolution chain: current member → snapshot/API last-known → id.
+      name: m?.name ?? lastKnownName.get(r.authorId) ?? null,
+      present: Boolean(m),
+      total: r.total,
+      d7: r.d7,
+      d30: r.d30,
+      activeDays: r.activeDays,
+      consistency,
+      channels: r.channels,
+      tenureDays,
+      lastSeen: new Date(r.lastSeen).toISOString(),
+      roleNames: (m?.roleIds ?? [])
+        .filter((id) => id !== guildId && roleName.has(id))
+        .slice(0, 4)
+        .map((id) => roleName.get(id)!),
+    };
   });
 
   const sorted = [...enriched].sort((a, b) => {
@@ -124,21 +193,20 @@ export default async function LeaderboardPage({
     }
   });
 
-  const sortHref = (k: SortKey) => `/dashboard/${guildId}/leaderboard?sort=${k}`;
-
   return (
     <div className="mx-auto max-w-6xl">
       <h1 className="text-2xl font-semibold tracking-tight">Contributor leaderboard</h1>
       <p className="mt-1 text-sm text-white/60">
         Member activity from the message log — who posts, how much, how
-        consistently, and how long they&apos;ve been around. Sort by any column
-        to spot promotion candidates.
+        consistently, and how long they&apos;ve been around. Sort by any column,
+        or expand a row for the per-channel breakdown.
       </p>
       <p className="mt-2 text-xs text-white/40">
         Covers all activity the bot has recorded. With the full message archive
         enabled, this backfills toward each channel&apos;s start over time — so
         historical totals keep growing as older history is archived. Bots
-        excluded. Names/roles resolved live; members who left show as their ID.
+        excluded. Names resolve from current membership, then snapshots, then a
+        Discord lookup for people who left; unknown ones show as their ID.
       </p>
 
       {sorted.length === 0 ? (
@@ -146,78 +214,13 @@ export default async function LeaderboardPage({
           No message activity logged yet.
         </div>
       ) : (
-        <div className="mt-6 overflow-x-auto rounded-2xl ring-1 ring-white/10">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-white/[0.03] text-xs uppercase tracking-wide text-white/50">
-              <tr>
-                <th className="px-3 py-2 font-medium">#</th>
-                <th className="px-3 py-2 font-medium">Member</th>
-                {COLUMNS.map((c) => (
-                  <th key={c.key} className="px-3 py-2 font-medium" title={c.hint}>
-                    <Link
-                      href={sortHref(c.key)}
-                      className={`hover:text-white ${
-                        sortKey === c.key ? "text-white" : ""
-                      }`}
-                    >
-                      {c.label}
-                      {sortKey === c.key ? " ↓" : ""}
-                    </Link>
-                  </th>
-                ))}
-                <th className="px-3 py-2 font-medium">Roles</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {sorted.map((r, i) => (
-                <tr key={r.authorId} className="bg-white/[0.02] hover:bg-white/[0.04]">
-                  <td className="px-3 py-2 text-white/40">{i + 1}</td>
-                  <td className="px-3 py-2">
-                    {r.member ? (
-                      <span className="font-medium text-white/90">{r.member.name}</span>
-                    ) : (
-                      <span className="text-white/40">
-                        <span className="font-mono text-xs">{r.authorId}</span>{" "}
-                        <span className="text-[10px]">(left)</span>
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-white/80">
-                    {r.total.toLocaleString()}
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-white/80">{r.d30}</td>
-                  <td className="px-3 py-2 tabular-nums text-white/80">{r.d7}</td>
-                  <td className="px-3 py-2 tabular-nums text-white/80">{r.activeDays}</td>
-                  <td className="px-3 py-2 tabular-nums text-white/70">
-                    {r.consistency}%
-                  </td>
-                  <td className="px-3 py-2 tabular-nums text-white/70">{r.channels}</td>
-                  <td className="px-3 py-2 text-xs text-white/50">
-                    {r.tenureDays}d ago
-                  </td>
-                  <td className="px-3 py-2 text-xs text-white/50">
-                    <LocalTime iso={new Date(r.lastSeen).toISOString()} />
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex max-w-[220px] flex-wrap gap-1">
-                      {(r.member?.roleIds ?? [])
-                        .filter((id) => id !== guildId && roleName.has(id))
-                        .slice(0, 4)
-                        .map((id) => (
-                          <span
-                            key={id}
-                            className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-white/60"
-                          >
-                            {roleName.get(id)}
-                          </span>
-                        ))}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <LeaderboardTable
+          guildId={guildId}
+          rows={sorted}
+          columns={COLUMNS}
+          sortKey={sortKey}
+          channelNames={channelName}
+        />
       )}
     </div>
   );

@@ -156,6 +156,23 @@ export async function getGuildMember(
   return res.json();
 }
 
+// Fetches a user by id — works for ANY user, including people who have left
+// the guild (returns their account-level username/global_name, not a server
+// nickname). Used as the leaderboard's last-resort name resolution for
+// departed posters not found in snapshots. Returns null on 404/error so
+// callers can fall back to showing the raw id.
+export async function getUser(
+  userId: string
+): Promise<{ username: string; global_name: string | null } | null> {
+  try {
+    const res = await discordFetch(`${BASE}/users/${userId}`, { headers: headers() });
+    if (!res.ok) return null;
+    return (await res.json()) as { username: string; global_name: string | null };
+  } catch {
+    return null;
+  }
+}
+
 export function iconUrl(guildId: string, iconHash: string | null): string | null {
   if (!iconHash) return null;
   return `https://cdn.discordapp.com/icons/${guildId}/${iconHash}.png`;
