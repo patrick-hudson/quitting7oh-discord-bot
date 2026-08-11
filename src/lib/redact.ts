@@ -37,6 +37,35 @@ export function redactString(text: string, opts: RedactOpts): string {
   return out;
 }
 
+// A redacted copy of the verdict, so it can be rendered through the SAME
+// formatted report component as the original. Text fields are de-identified;
+// the outreach draft (a directly-named message) and the crisis detail (a
+// human-only quote) are dropped — the crisis flag itself is kept so the reader
+// knows one exists.
+export function redactVerdict(
+  verdict: AiVerdict,
+  opts: { name: string | null; userId: string }
+): AiVerdict {
+  const R = (t?: string) =>
+    redactString(t ?? "", { names: [opts.name], ids: [opts.userId] });
+  const points = (arr: AiVerdict["strengths"]) =>
+    (arr ?? []).map((p) => ({
+      point: R(p.point),
+      evidence: R(p.evidence),
+      context: p.context ? R(p.context) : undefined,
+    }));
+  return {
+    recommendation: verdict.recommendation,
+    confidence: verdict.confidence,
+    summary: R(verdict.summary),
+    strengths: points(verdict.strengths),
+    concerns: points(verdict.concerns),
+    crisisFlag: verdict.crisisFlag,
+    crisisNote: undefined,
+    outreachMessage: undefined,
+  };
+}
+
 export type RedactedReportMeta = {
   name: string | null;
   userId: string;

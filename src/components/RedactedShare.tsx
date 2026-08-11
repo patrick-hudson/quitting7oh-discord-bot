@@ -1,12 +1,16 @@
 "use client";
 
 // A collapsible "Share (redacted)" panel that sits alongside the full review.
-// Builds a de-identified plain-text report from the stored verdict and offers
-// it for copy — no model call, works on any existing review.
+// Renders a de-identified copy of the verdict through the SAME formatted report
+// component, so it looks exactly like the real report — just with the member's
+// name, id, links and emails removed, and the outreach draft + crisis detail
+// left out. Also offers a plain-text copy for pasting where markup won't
+// render (a Discord message, a doc). No model call — works on any review.
 
 import { useState } from "react";
-import { buildRedactedReport } from "@/lib/redact";
+import { buildRedactedReport, redactVerdict } from "@/lib/redact";
 import { RECO, CONFIDENCE_LABEL } from "@/components/ai-review-meta";
+import { VerdictReport } from "@/components/VerdictReport";
 import { CopyButton } from "@/components/CopyButton";
 import type { AiVerdict } from "@/lib/ai-review";
 
@@ -20,12 +24,14 @@ export function RedactedShare({
   verdict: AiVerdict;
   targetName: string | null;
   targetUserId: string;
-  finishedAt: string | null;
+  finishedAt: string | null; // ISO date (yyyy-mm-dd), for the plaintext copy
   messagesAnalyzed: number;
 }) {
   const [open, setOpen] = useState(false);
+
+  const redacted = redactVerdict(verdict, { name: targetName, userId: targetUserId });
   const reco = RECO[verdict.recommendation] ?? RECO.not_yet;
-  const report = buildRedactedReport(verdict, {
+  const plaintext = buildRedactedReport(verdict, {
     name: targetName,
     userId: targetUserId,
     recoLabel: reco.label,
@@ -52,16 +58,28 @@ export function RedactedShare({
 
       {open && (
         <div className="border-t border-white/5 p-4">
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-4 flex items-center justify-between gap-2">
             <p className="text-xs text-white/50">
-              Name, user ID, links and emails are removed. The outreach draft and
-              the crisis detail are left out of the shared copy.
+              Name, user ID, links and emails removed. The outreach draft and the
+              crisis detail are left out of the shared copy.
             </p>
-            <CopyButton text={report} label="Copy" className="shrink-0 rounded-md bg-[color:var(--color-brand-600)] px-2.5 py-1 text-xs font-medium text-white hover:opacity-90" />
+            <CopyButton
+              text={plaintext}
+              label="Copy as text"
+              className="shrink-0 rounded-md bg-[color:var(--color-brand-600)] px-2.5 py-1 text-xs font-medium text-white hover:opacity-90"
+            />
           </div>
-          <pre className="max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-[12px] leading-relaxed text-white/85 ring-1 ring-white/10">
-            {report}
-          </pre>
+
+          <div className="rounded-xl bg-black/20 p-4 ring-1 ring-white/10">
+            <VerdictReport
+              verdict={redacted}
+              meta={{
+                messagesAnalyzed,
+                finishedAtIso: null,
+              }}
+            />
+          </div>
+
           <p className="mt-2 text-[11px] text-amber-200/70">
             Quotes may still contain a first name someone typed in plain text —
             skim the copy before sharing it externally.
