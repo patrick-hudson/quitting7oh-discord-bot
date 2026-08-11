@@ -48,9 +48,12 @@ export type AiVerdict = {
   concerns: VerdictPoint[];
   // Raised when the history shows self-harm / crisis signals that a human
   // should look at — routed here on purpose instead of folding into the
-  // promote/reject axis.
+  // promote/reject axis. crisisNote carries the specific signal.
   crisisFlag: boolean;
   crisisNote?: string;
+  // A ready-to-send draft the moderator can use to open a conversation with
+  // the member about the contributor role (never references the crisis signal).
+  outreachMessage?: string;
 };
 
 export type AiReviewResult = {
@@ -110,14 +113,20 @@ Rules you must follow:
 - Base every strength and concern on the actual messages. Quote or closely paraphrase as evidence. Do not invent behavior you did not see.
 - Do NOT infer or comment on race, gender, age, religion, nationality, sexuality, disability, or any protected characteristic. Judge behavior, not identity.
 - This is decision-support for a human, not a clinical, diagnostic, or final judgment of the person. Write with that humility.
-- If you see signs the member may be in crisis or at risk of self-harm, set crisisFlag=true and briefly note it — this routes to a human for care, separate from the fit question. Do not let a crisis signal by itself drive a negative fit recommendation.
+- If you see signs the member may be in crisis or at risk of self-harm, set crisisFlag=true AND put the specific signal in crisisNote — a short verbatim quote or close paraphrase of what they actually said, with rough timing, so a moderator can act on it directly. Never set crisisFlag=true with a vague or empty note. This routes to a human for care, separate from the fit question; do not let a crisis signal by itself drive a negative fit recommendation.
 - Be concise and specific. A few strong, well-evidenced points beat a long list of vague ones.
 
 Recommendation scale:
 - strong_fit: clear, well-rounded evidence they'd be an asset now.
 - possible_fit: promising but with gaps worth watching or a short conversation first.
 - not_yet: not enough positive signal yet (often just early/low activity) — revisit later.
-- concern: something in the messages actively argues against giving them this role right now.`;
+- concern: something in the messages actively argues against giving them this role right now.
+
+Outreach draft (outreachMessage):
+Also write a short first-person note the moderator can send this member to open a conversation about the contributor role. Write it as a peer in recovery would — warm, human, plainspoken — not as a corporate recruiter. Use the member's name and ground it in specifics from their messages. Tailor it to the recommendation:
+- strong_fit / possible_fit: tell them you've noticed the real things they bring (name a couple, specifically) and that you're thinking about inviting them to be a contributor, and open the door to talk.
+- not_yet / concern: be honest and kind — say you're considering them and that a couple of things came up in a quick fit check you'd want to talk through first (name the actual points, framed as things to discuss, not accusations), and invite the conversation.
+Keep it to a few short sentences. End by inviting a reply. Do NOT mention any crisis/self-harm signal, do not reference internal scoring or this being an "AI review," and keep it something a person would genuinely be glad to receive.`;
 
 // Tool the map step extracts signals with (cheap model, per chunk).
 const SIGNALS_TOOL: Anthropic.Tool = {
@@ -156,6 +165,11 @@ const SIGNALS_TOOL: Anthropic.Tool = {
         type: "boolean",
         description:
           "True if this segment shows possible self-harm/crisis signals a human should review.",
+      },
+      crisisDetail: {
+        type: "string",
+        description:
+          "REQUIRED whenever crisisSignals is true: the specific signal — a short verbatim quote or close paraphrase of exactly what the member said that raised the concern, plus the rough date if visible. Leave empty only when crisisSignals is false. Never set crisisSignals=true without filling this in.",
       },
     },
     required: ["observations", "quotes", "redFlags", "crisisSignals"],
@@ -210,7 +224,16 @@ const VERDICT_TOOL: Anthropic.Tool = {
         },
       },
       crisisFlag: { type: "boolean" },
-      crisisNote: { type: "string" },
+      crisisNote: {
+        type: "string",
+        description:
+          "REQUIRED whenever crisisFlag is true: the specific self-harm/crisis signal — a short verbatim quote or close paraphrase of what the member said, with rough timing — so a moderator can act on it directly. Never set crisisFlag without describing the actual signal here.",
+      },
+      outreachMessage: {
+        type: "string",
+        description:
+          "A warm, honest, first-person draft note a moderator could send this member to open a conversation about the contributor role. Follow the outreach-draft rules in the system prompt. Never mention the crisis signal or clinical scoring here — that is handled separately by a human.",
+      },
     },
     required: [
       "recommendation",
@@ -219,6 +242,7 @@ const VERDICT_TOOL: Anthropic.Tool = {
       "strengths",
       "concerns",
       "crisisFlag",
+      "outreachMessage",
     ],
   },
 };
@@ -269,7 +293,7 @@ export async function generateReview(
       system: input.systemPrompt,
       user,
       tool: VERDICT_TOOL,
-      maxTokens: 2500,
+      maxTokens: 3200,
     });
     verdict = normalizeVerdict(res.input);
     inputTokens += res.inputTokens;
@@ -283,7 +307,7 @@ export async function generateReview(
       const res = await callTool(client, {
         model: env.aiReviewMapModel(),
         system:
-          "You extract signals about whether a member fits a peer-mentor role in a kratom/7-OH recovery community. Judge behavior, not identity; never infer protected characteristics. Be faithful to the text.",
+          "You extract signals about whether a member fits a peer-mentor role in a kratom/7-OH recovery community. Judge behavior, not identity; never infer protected characteristics. Be faithful to the text. If you flag a crisis/self-harm signal, you MUST record the exact quote or close paraphrase that prompted it in crisisDetail — never a bare 'yes'.",
         user: `Segment ${i + 1} of ${chunks.length} of one member's messages:\n\n${chunks[
           i
         ].join("\n")}`,
@@ -302,7 +326,7 @@ export async function generateReview(
       system: input.systemPrompt,
       user,
       tool: VERDICT_TOOL,
-      maxTokens: 2500,
+      maxTokens: 3200,
     });
     verdict = normalizeVerdict(res.input);
     inputTokens += res.inputTokens;
@@ -521,6 +545,7 @@ type SignalsInput = {
   quotes?: unknown;
   redFlags?: unknown;
   crisisSignals?: unknown;
+  crisisDetail?: unknown;
 };
 
 function formatSegment(n: number, s: SignalsInput): string {
@@ -539,7 +564,10 @@ function formatSegment(n: number, s: SignalsInput): string {
   const flags = flagList.length
     ? `\nRed flags: ${flagList.map((f) => String(f)).join("; ")}`
     : "";
-  const crisis = s.crisisSignals ? "\nCrisis signals: yes" : "";
+  const crisisDetail = typeof s.crisisDetail === "string" ? s.crisisDetail.trim() : "";
+  const crisis = s.crisisSignals
+    ? `\nCrisis signal: ${crisisDetail || "flagged but no detail was provided — re-read this segment"}`
+    : "";
   const observations = typeof s.observations === "string" ? s.observations : "";
   return `## Segment ${n}\n${observations}${
     quotes ? `\nNotable quotes:\n${quotes}` : ""
@@ -589,6 +617,9 @@ function normalizeVerdict(raw: unknown): AiVerdict {
     concerns: points(v.concerns),
     crisisFlag: Boolean(v.crisisFlag),
     crisisNote: v.crisisNote ? String(v.crisisNote).trim() : undefined,
+    outreachMessage: v.outreachMessage
+      ? String(v.outreachMessage).trim()
+      : undefined,
   };
 }
 

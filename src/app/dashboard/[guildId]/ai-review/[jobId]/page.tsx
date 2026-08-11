@@ -10,6 +10,7 @@ import { requireGuildAccess } from "@/lib/authz";
 import { LocalTime } from "@/components/LocalTime";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { AiReviewButton } from "@/components/AiReviewControls";
+import { CopyButton } from "@/components/CopyButton";
 import { RECO, CONFIDENCE_LABEL } from "@/components/ai-review-meta";
 import type { AiVerdict } from "@/lib/ai-review";
 import type { AiReviewJob } from "@prisma/client";
@@ -203,6 +204,24 @@ function ReviewColumn({
 
       <PointList title="Strengths" tone="pos" points={verdict.strengths} />
       <PointList title="Concerns" tone="neg" points={verdict.concerns} />
+
+      {verdict.outreachMessage && (
+        <div className="mt-6 rounded-xl bg-[color:var(--color-brand-600)]/[0.06] p-4 ring-1 ring-[color:var(--color-brand-600)]/20">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-white/60">
+              Suggested outreach
+            </h3>
+            <CopyButton text={verdict.outreachMessage} />
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-white/85">
+            {verdict.outreachMessage}
+          </p>
+          <p className="mt-2 text-[11px] text-white/35">
+            A starting point to send this member — read it over and make it yours
+            before sending. It intentionally doesn&apos;t mention any crisis flag.
+          </p>
+        </div>
+      )}
 
       <p className="mt-6 border-t border-white/5 pt-3 text-[11px] text-white/35">
         {job.messagesAnalyzed.toLocaleString()} messages analyzed · source:{" "}
