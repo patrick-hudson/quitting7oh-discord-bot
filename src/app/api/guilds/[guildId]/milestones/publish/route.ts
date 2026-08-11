@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 import {
   buttonsToRows,
   editButtonMessage,
@@ -16,7 +17,7 @@ export const POST = withErrors(async (
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const config = await prisma.milestoneConfig.findUnique({ where: { guildId } });
   if (!config || !config.channelId) {
@@ -80,5 +81,10 @@ export const POST = withErrors(async (
     data: { messageId },
   });
 
+  audit(guildId, "milestone.published", "Published the milestone-claim message", {
+    by: session.user.discordId,
+    channelId: config.channelId,
+    messageId,
+  });
   return NextResponse.json({ config: updated });
 });

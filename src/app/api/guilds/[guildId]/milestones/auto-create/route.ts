@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 import { createRole, deleteRole, listRoles, setRolePositions } from "@/lib/discord-rest";
 import { getTheme, hexToInt } from "@/lib/milestone-themes";
 
@@ -32,7 +33,7 @@ export const POST = withErrors(async (
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const { themeId, labels, replaceAll, belowRoleId } = bodySchema.parse(await req.json());
   const theme = getTheme(themeId);
@@ -201,6 +202,13 @@ export const POST = withErrors(async (
     orderBy: { sortOrder: "asc" },
   });
 
+  audit(
+    guildId,
+    "milestone.roles_created",
+    `Auto-created milestone roles from theme — ${created} created, ${deleted} deleted`,
+    { by: session.user.discordId, created, preserved, deleted },
+    "warn"
+  );
   return NextResponse.json({
     tiers,
     stats: {

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 
 const templateRoster = z.array(z.string().min(1).max(2000)).max(20).default([]);
 
@@ -27,7 +28,7 @@ export const PATCH = withErrors(async (
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const input = defaultsSchema.parse(await req.json());
   const guild = await prisma.guild.update({
@@ -39,5 +40,11 @@ export const PATCH = withErrors(async (
     },
   });
 
+  audit(guildId, "config.defaults_saved", "Default message rosters updated", {
+    by: session.user.discordId,
+    reminderCount: input.reminderTemplates.length,
+    leaveCount: input.leaveTemplates.length,
+    welcomeCount: input.welcomeDmTemplates.length,
+  });
   return NextResponse.json({ guild });
 });

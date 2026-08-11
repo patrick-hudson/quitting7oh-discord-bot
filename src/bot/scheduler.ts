@@ -94,6 +94,13 @@ async function takeScheduledSnapshots() {
       });
     } catch (err) {
       console.error(`[scheduler] enqueue snapshot failed for guild ${g.id}:`, err);
+      audit(
+        g.id,
+        "snapshot.failed",
+        "Couldn't queue the nightly structure snapshot",
+        { error: (err as Error).message?.slice(0, 500) },
+        "error"
+      );
     }
   }
 }
@@ -275,6 +282,13 @@ async function maybeScheduleReminder(
   // in 0 minutes" nudge moments after the original post is just noise.
   if (remindAt.getTime() <= Date.now()) {
     console.log(`[scheduler] "${post.name}" reminder time already passed, skipping`);
+    audit(
+      post.guildId,
+      "reminder.skipped",
+      `Reminder for "${post.name}" skipped — its time had already passed at fire`,
+      { postId: post.id, postName: post.name, reminderMinutes: post.reminderMinutes },
+      "warn"
+    );
     return;
   }
 

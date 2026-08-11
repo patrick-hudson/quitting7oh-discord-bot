@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 import { postSchema } from "@/lib/post-schema";
 import { computeNextFireAt, isValidCron } from "@/lib/cron";
 
@@ -10,7 +11,7 @@ export const PATCH = withErrors(async (
   ctx: { params: Promise<{ guildId: string; id: string }> }
 ) => {
   const { guildId, id } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const guild = await prisma.guild.findUnique({ where: { id: guildId } });
   if (!guild) return NextResponse.json({ error: "Guild not found" }, { status: 404 });
@@ -64,6 +65,10 @@ export const PATCH = withErrors(async (
     },
   });
 
+  audit(guildId, "post.updated", `Edited scheduled post "${post.name}"`, {
+    postId: post.id,
+    by: session.user.discordId,
+  });
   return NextResponse.json({ post });
 });
 
@@ -72,12 +77,16 @@ export const DELETE = withErrors(async (
   ctx: { params: Promise<{ guildId: string; id: string }> }
 ) => {
   const { guildId, id } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const existing = await prisma.scheduledPost.findUnique({ where: { id } });
   if (!existing || existing.guildId !== guildId) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   await prisma.scheduledPost.delete({ where: { id } });
+  audit(guildId, "post.deleted", `Deleted scheduled post "${existing.name}"`, {
+    postId: id,
+    by: session.user.discordId,
+  });
   return NextResponse.json({ ok: true });
 });

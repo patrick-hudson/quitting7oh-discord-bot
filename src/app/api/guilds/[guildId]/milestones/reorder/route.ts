@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 import { listRoles, setRolePositions } from "@/lib/discord-rest";
 
 const bodySchema = z.object({
@@ -22,7 +23,7 @@ export const POST = withErrors(async (
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const { belowRoleId } = bodySchema.parse(await req.json().catch(() => ({})));
 
@@ -88,6 +89,10 @@ export const POST = withErrors(async (
 
   await setRolePositions(guildId, positions);
 
+  audit(guildId, "milestone.reordered", `Reordered ${positions.length} milestone role(s)`, {
+    by: session.user.discordId,
+    repositioned: positions.length,
+  });
   return NextResponse.json({
     ok: true,
     repositioned: positions.length,

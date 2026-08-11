@@ -19,6 +19,7 @@ const CATEGORIES = [
   { key: "welcome", label: "Welcome DMs" },
   { key: "leave", label: "Departures" },
   { key: "milestone", label: "Milestones" },
+  { key: "config", label: "Config" },
   { key: "export", label: "Exports" },
   { key: "snapshot", label: "Snapshots" },
   { key: "archive", label: "Archive" },

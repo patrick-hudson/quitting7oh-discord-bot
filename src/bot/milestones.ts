@@ -87,6 +87,15 @@ export function registerMilestoneHandler(client: Client) {
         });
       } catch (err) {
         console.error("[milestones] self-reset failed:", err);
+        if (interaction.guildId) {
+          audit(
+            interaction.guildId,
+            "milestone.self_reset_failed",
+            `Self-service milestone reset failed for ${interaction.user.username}`,
+            { userId: interaction.user.id, error: (err as Error).message?.slice(0, 300) },
+            "error"
+          );
+        }
         try {
           await interaction.editReply({
             content:
@@ -267,6 +276,15 @@ export function registerMilestoneHandler(client: Client) {
       }
     } catch (err) {
       console.error("[milestones] interaction failed:", err);
+      if (interaction.guildId) {
+        audit(
+          interaction.guildId,
+          "milestone.claim_failed",
+          `Milestone claim failed for ${interaction.user.username}`,
+          { userId: interaction.user.id, tierId, error: (err as Error).message?.slice(0, 300) },
+          "error"
+        );
+      }
       // Best-effort surfacing — we already deferred, so editReply is the
       // primary path; fall back to followUp if something edited it already.
       try {

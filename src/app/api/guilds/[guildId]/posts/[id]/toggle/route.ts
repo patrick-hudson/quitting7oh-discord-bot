@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 import { computeNextFireAt } from "@/lib/cron";
 
 export const POST = withErrors(async (
@@ -9,7 +10,7 @@ export const POST = withErrors(async (
   ctx: { params: Promise<{ guildId: string; id: string }> }
 ) => {
   const { guildId, id } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const body = (await req.json()) as { active?: boolean };
   const active = typeof body.active === "boolean" ? body.active : undefined;
@@ -38,5 +39,11 @@ export const POST = withErrors(async (
     where: { id },
     data: { active: nextActive, nextFireAt },
   });
+  audit(
+    guildId,
+    "post.toggled",
+    `${nextActive ? "Activated" : "Paused"} scheduled post "${post.name}"`,
+    { postId: id, active: nextActive, by: session.user.discordId }
+  );
   return NextResponse.json({ post });
 });

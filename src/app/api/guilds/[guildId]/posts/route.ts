@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
+import { audit } from "@/lib/audit";
 import { prisma } from "@/lib/db";
 import { postSchema } from "@/lib/post-schema";
 import { computeNextFireAt, isValidCron } from "@/lib/cron";
@@ -60,5 +61,10 @@ export const POST = withErrors(async (
     },
   });
 
+  audit(guildId, "post.created", `Created scheduled post "${post.name}"`, {
+    postId: post.id,
+    active: post.active,
+    by: session.user.discordId,
+  });
   return NextResponse.json({ post });
 });

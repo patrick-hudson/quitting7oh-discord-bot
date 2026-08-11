@@ -173,6 +173,12 @@ async function archiveChannel(
         console.log(
           `[archive] reconciled ${inserted} MessageEvent row(s) from #${channelName}'s archive`
         );
+        audit(
+          guildId,
+          "archive.reconciled",
+          `Backfilled ${inserted} activity record(s) from #${channelName}'s archive`,
+          { channelId, channelName, inserted }
+        );
       }
     } catch (err) {
       console.warn(`[archive] event reconcile failed for ${channelId}:`, err);

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 import { computeNextFireAt } from "@/lib/cron";
 
 const settingsSchema = z.object({
@@ -29,7 +30,7 @@ export const PATCH = withErrors(async (
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const input = settingsSchema.parse(await req.json());
 
@@ -88,5 +89,12 @@ export const PATCH = withErrors(async (
     await prisma.scheduledPost.update({ where: { id: p.id }, data: { nextFireAt: next } });
   }
 
+  audit(guildId, "config.settings_saved", "Guild settings updated", {
+    by: session.user.discordId,
+    redditEnabled: input.redditEnabled,
+    leaveEnabled: input.leaveEnabled,
+    welcomeDmEnabled: input.welcomeDmEnabled,
+    archiveEnabled: input.archiveEnabled,
+  });
   return NextResponse.json({ guild: updated });
 });

@@ -16,6 +16,7 @@ import {
 } from "discord.js";
 import { prisma } from "@/lib/db";
 import { iconUrl } from "@/lib/discord-rest";
+import { audit } from "@/lib/audit";
 import { runScheduler } from "./scheduler";
 import { runRedditPoller } from "./reddit-poller";
 import { runUserExportWorker } from "./user-export-worker";
@@ -121,6 +122,7 @@ async function main() {
       create: { id: g.id, name: g.name, iconUrl: iconUrl(g.id, g.icon) },
       update: { name: g.name, iconUrl: iconUrl(g.id, g.icon) },
     });
+    audit(g.id, "guild.joined", `Bot added to ${g.name}`, { name: g.name });
   });
 
   client.on(Events.GuildUpdate, async (_old, g) => {

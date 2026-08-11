@@ -89,6 +89,13 @@ export function registerLeaveAnnouncer(client: Client) {
           console.warn(
             `[leave] channel ${config.leaveChannelId} in ${member.guild.id} not sendable`
           );
+          audit(
+            member.guild.id,
+            "leave.announce_failed",
+            `Couldn't announce ${name}'s departure — configured channel isn't sendable`,
+            { userId: member.id, channelId: config.leaveChannelId },
+            "warn"
+          );
           return;
         }
         await channel.send({ content });

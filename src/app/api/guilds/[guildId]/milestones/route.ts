@@ -3,6 +3,7 @@ import { z } from "zod";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 
 // Each roster entry is capped at 2000 chars (Discord's message limit). The
 // array itself is capped at 20 entries — well beyond any realistic roster
@@ -65,7 +66,7 @@ export const PATCH = withErrors(async (
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   const input = configSchema.parse(await req.json());
   const normalizedChannelId =
@@ -137,5 +138,9 @@ export const PATCH = withErrors(async (
     orderBy: { sortOrder: "asc" },
   });
 
+  audit(guildId, "milestone.config_saved", "Milestone config saved", {
+    by: session.user.discordId,
+    tierCount: tiers.length,
+  });
   return NextResponse.json({ config, tiers });
 });
