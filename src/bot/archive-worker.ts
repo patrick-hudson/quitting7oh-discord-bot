@@ -178,6 +178,25 @@ async function archiveChannel(
         messages.map((m) => JSON.stringify(m)).join("\n") + "\n",
         "utf8"
       );
+      // Backfill MessageEvent (the activity index behind the leaderboard/graph)
+      // from archived history, so stats reach back to each channel's start —
+      // not just when real-time logging was enabled. skipDuplicates makes this
+      // idempotent against the live logger and re-runs.
+      await prisma.messageEvent
+        .createMany({
+          data: messages.map((m) => ({
+            id: m.id,
+            guildId,
+            channelId,
+            authorId: m.author.id,
+            isBot: Boolean(m.author.bot),
+            sentAt: new Date(m.timestamp),
+          })),
+          skipDuplicates: true,
+        })
+        .catch((err) =>
+          console.warn(`[archive] MessageEvent backfill failed for ${channelId}:`, err)
+        );
     }
     await prisma.archiveChannelState.update({
       where: { guildId_channelId: { guildId, channelId } },

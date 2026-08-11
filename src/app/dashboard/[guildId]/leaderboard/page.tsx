@@ -135,9 +135,10 @@ export default async function LeaderboardPage({
         to spot promotion candidates.
       </p>
       <p className="mt-2 text-xs text-white/40">
-        Counts start from when message logging began, not the server&apos;s
-        creation. Bots excluded. Names/roles resolved live; members who left
-        show as their ID.
+        Covers all activity the bot has recorded. With the full message archive
+        enabled, this backfills toward each channel&apos;s start over time — so
+        historical totals keep growing as older history is archived. Bots
+        excluded. Names/roles resolved live; members who left show as their ID.
       </p>
 
       {sorted.length === 0 ? (
