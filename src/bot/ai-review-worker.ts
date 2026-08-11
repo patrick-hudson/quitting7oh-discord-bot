@@ -13,7 +13,7 @@
 import { Client } from "discord.js";
 import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
-import { getUser } from "@/lib/discord-rest";
+import { getGuildMember, getUser } from "@/lib/discord-rest";
 import {
   generateReview,
   resolveReviewPrompt,
@@ -57,13 +57,30 @@ export function runAiReviewWorker(client: Client) {
   }, POLL_MS);
 }
 
+// Drain the queue: keep claiming jobs until none are pending, so a batch of
+// hundreds doesn't pay the poll interval between every review. Ad-hoc reviews
+// (batchId=null) always jump ahead of batch jobs — a moderator asking about
+// one member right now shouldn't wait hours behind a bulk run.
 async function tick(client: Client) {
-  const job = await prisma.aiReviewJob.findFirst({
-    where: { status: "pending" },
-    orderBy: { createdAt: "asc" },
-  });
-  if (!job) return;
+  for (;;) {
+    const job =
+      (await prisma.aiReviewJob.findFirst({
+        where: { status: "pending", batchId: null },
+        orderBy: { createdAt: "asc" },
+      })) ??
+      (await prisma.aiReviewJob.findFirst({
+        where: { status: "pending" },
+        orderBy: { createdAt: "asc" },
+      }));
+    if (!job) return;
+    const keepGoing = await processJob(client, job);
+    if (!keepGoing) return;
+  }
+}
 
+// Returns false when the tick should stop draining (missing API key would
+// otherwise insta-fail every queued job in one loop).
+async function processJob(client: Client, job: AiReviewJob): Promise<boolean> {
   await prisma.aiReviewJob.update({
     where: { id: job.id },
     data: { status: "running", startedAt: new Date() },
@@ -71,6 +88,31 @@ async function tick(client: Client) {
   console.log(
     `[ai-review] job ${job.id}: reviewing ${job.targetUserId} in guild ${job.guildId}`
   );
+
+  // Batch jobs can sit queued for hours — re-check membership at run time so
+  // we don't spend a review on someone who left after being selected. 404 =
+  // gone; any other error fails open (run the review).
+  if (job.batchId) {
+    let member: unknown = undefined;
+    try {
+      member = await getGuildMember(job.guildId, job.targetUserId);
+    } catch {
+      member = undefined; // Discord hiccup — proceed with the review
+    }
+    if (member === null) {
+      await prisma.aiReviewJob.update({
+        where: { id: job.id },
+        data: {
+          status: "cancelled",
+          finishedAt: new Date(),
+          error: "Member left the server before their review ran — skipped.",
+        },
+      });
+      console.log(`[ai-review] job ${job.id}: member left, skipped`);
+      await maybeNotifyBatchDone(client, job);
+      return true;
+    }
+  }
 
   try {
     const guild = await prisma.guild.findUnique({ where: { id: job.guildId } });
@@ -130,7 +172,12 @@ async function tick(client: Client) {
       },
       result.verdict.crisisFlag ? "warn" : "ok"
     );
-    await notifyRequester(client, job, targetName, result.verdict.recommendation);
+    if (job.batchId) {
+      await maybeNotifyBatchDone(client, job);
+    } else {
+      await notifyRequester(client, job, targetName, result.verdict.recommendation);
+    }
+    return true;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[ai-review] job ${job.id} failed:`, err);
@@ -157,6 +204,10 @@ async function tick(client: Client) {
         error: message.slice(0, 2000),
       },
     });
+    if (job.batchId) await maybeNotifyBatchDone(client, job);
+    // Without an API key every queued job fails identically — stop draining
+    // and let the next poll retry, instead of torching a whole batch.
+    return !(err instanceof NoApiKeyError);
   }
 }
 
@@ -216,6 +267,81 @@ async function resolveName(
   if (stats?.name) return stats.name;
   const u = await getUser(job.targetUserId);
   return u?.global_name || u?.username || job.targetUserId;
+}
+
+// Batch jobs skip the per-job DM (250 pings would be abuse, not a feature) and
+// instead send ONE summary when the last job of the batch settles. "Settles"
+// = no pending/running jobs left under this batchId, whatever the mix of
+// done/failed/cancelled — including a moderator cancelling the tail.
+async function maybeNotifyBatchDone(client: Client, job: AiReviewJob) {
+  const batchId = job.batchId;
+  if (!batchId) return;
+  try {
+    const remaining = await prisma.aiReviewJob.count({
+      where: { guildId: job.guildId, batchId, status: { in: ["pending", "running"] } },
+    });
+    if (remaining > 0) return;
+
+    const [byStatus, byRec, crisisCount] = await Promise.all([
+      prisma.aiReviewJob.groupBy({
+        by: ["status"],
+        where: { guildId: job.guildId, batchId },
+        _count: { _all: true },
+      }),
+      prisma.aiReviewJob.groupBy({
+        by: ["recommendation"],
+        where: { guildId: job.guildId, batchId, status: "done" },
+        _count: { _all: true },
+      }),
+      prisma.aiReviewJob.count({
+        where: {
+          guildId: job.guildId,
+          batchId,
+          status: "done",
+          verdict: { path: ["crisisFlag"], equals: true },
+        },
+      }),
+    ]);
+    const statusCount = (s: string) =>
+      byStatus.find((r) => r.status === s)?._count._all ?? 0;
+    const done = statusCount("done");
+    const failed = statusCount("failed");
+    const cancelled = statusCount("cancelled");
+    const recParts = byRec
+      .filter((r) => r.recommendation)
+      .sort((a, b) => b._count._all - a._count._all)
+      .map((r) => `${r._count._all} ${labelFor(r.recommendation!)}`)
+      .join(", ");
+
+    audit(
+      job.guildId,
+      "aireview.batch_completed",
+      `Review batch finished — ${done} done${recParts ? ` (${recParts})` : ""}, ${failed} failed, ${cancelled} skipped/cancelled${
+        crisisCount > 0 ? `, ⚠ ${crisisCount} crisis flag(s)` : ""
+      }`,
+      { batchId, done, failed, cancelled, crisisCount, requestedBy: job.requestedBy },
+      crisisCount > 0 ? "warn" : "ok"
+    );
+
+    const base = (process.env.NEXTAUTH_URL ?? "").replace(/\/$/, "");
+    const link = base
+      ? `${base}/dashboard/${job.guildId}/ai-review`
+      : "the portal's AI Reviews page";
+    const user = await client.users.fetch(job.requestedBy);
+    await user.send(
+      `🧭 Your batch of AI fit reviews is finished: **${done} reviewed**${
+        recParts ? ` (${recParts})` : ""
+      }${failed ? `, ${failed} failed` : ""}${
+        cancelled ? `, ${cancelled} skipped/cancelled` : ""
+      }.${
+        crisisCount > 0
+          ? ` ⚠ ${crisisCount} review(s) raised a crisis flag — please look at those first.`
+          : ""
+      } Browse them at ${link}.`
+    );
+  } catch (err) {
+    console.warn(`[ai-review] batch-done notify for ${batchId} failed:`, err);
+  }
 }
 
 async function notifyRequester(

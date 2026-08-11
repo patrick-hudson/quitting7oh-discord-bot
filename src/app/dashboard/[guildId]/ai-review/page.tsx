@@ -6,28 +6,71 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireGuildAccess } from "@/lib/authz";
-import { LocalTime } from "@/components/LocalTime";
 import { NewReviewForm } from "@/components/AiReviewControls";
+import { BatchReviewForm, CancelBatchButton } from "@/components/AiReviewBatch";
+import { AiReviewList } from "@/components/AiReviewList";
 import { AiReviewPromptEditor } from "@/components/AiReviewPromptEditor";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { DEFAULT_REVIEW_PROMPT, resolveReviewPrompt } from "@/lib/ai-review";
-import { RECO } from "@/components/ai-review-meta";
+import { listRoles } from "@/lib/discord-rest";
+
+// Progress of the most recent batch, if it's still working. Rendered as a
+// summary card instead of flooding the reviews list with queued rows.
+async function loadActiveBatch(guildId: string) {
+  const latest = await prisma.aiReviewJob.findFirst({
+    where: { guildId, batchId: { not: null } },
+    orderBy: { createdAt: "desc" },
+    select: { batchId: true },
+  });
+  if (!latest?.batchId) return null;
+  const byStatus = await prisma.aiReviewJob.groupBy({
+    by: ["status"],
+    where: { guildId, batchId: latest.batchId },
+    _count: { _all: true },
+  });
+  const count = (s: string) => byStatus.find((r) => r.status === s)?._count._all ?? 0;
+  const pending = count("pending");
+  const running = count("running");
+  if (pending + running === 0) return null; // finished — the list tells the story
+  const done = count("done");
+  const failed = count("failed");
+  const cancelled = count("cancelled");
+  return {
+    batchId: latest.batchId,
+    pending,
+    running,
+    done,
+    failed,
+    cancelled,
+    total: pending + running + done + failed + cancelled,
+  };
+}
 
 export default async function AiReviewListPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ guildId: string }>;
+  searchParams: Promise<{ view?: string }>;
 }) {
   const { guildId } = await params;
+  const { view } = await searchParams;
+  const archivedView = view === "archived";
   await requireGuildAccess(guildId);
 
-  const [guild, jobs] = await Promise.all([
+  const [guild, jobs, batch, archivedCount, roles] = await Promise.all([
     prisma.guild.findUnique({
       where: { id: guildId },
       select: { aiReviewPrompt: true },
     }),
     prisma.aiReviewJob.findMany({
-      where: { guildId },
+      where: {
+        guildId,
+        archivedAt: archivedView ? { not: null } : null,
+        // Batch jobs appear here once they actually run (or get skipped);
+        // still-queued ones are summarized by the batch progress card.
+        NOT: { batchId: { not: null }, status: "pending" },
+      },
       orderBy: { createdAt: "desc" },
       take: 100,
       select: {
@@ -42,11 +85,18 @@ export default async function AiReviewListPage({
         error: true,
       },
     }),
+    loadActiveBatch(guildId),
+    prisma.aiReviewJob.count({
+      where: { guildId, archivedAt: { not: null } },
+    }),
+    // For the batch form's role-exclusion picker. Best-effort: the form
+    // degrades to "no role exclusions" if Discord is unreachable.
+    listRoles(guildId).catch(() => []),
   ]);
 
-  const anyInFlight = jobs.some(
-    (j) => j.status === "pending" || j.status === "running"
-  );
+  const anyInFlight =
+    batch !== null ||
+    jobs.some((j) => j.status === "pending" || j.status === "running");
   const effectivePrompt = resolveReviewPrompt(guild?.aiReviewPrompt);
   const isCustom = Boolean(guild?.aiReviewPrompt?.trim());
 
@@ -60,8 +110,48 @@ export default async function AiReviewListPage({
         you — not a clinical or final judgment of anyone.
       </p>
 
+      {batch && (
+        <div className="mt-6 rounded-xl bg-[color:var(--color-brand-600)]/[0.06] p-4 ring-1 ring-[color:var(--color-brand-600)]/20">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-white/85">
+                Batch review in progress —{" "}
+                {batch.done + batch.failed + batch.cancelled} of {batch.total}
+              </p>
+              <p className="mt-0.5 text-xs text-white/55">
+                {batch.done} done
+                {batch.failed > 0 && ` · ${batch.failed} failed`}
+                {batch.cancelled > 0 && ` · ${batch.cancelled} skipped`}
+                {" · "}
+                {batch.pending + batch.running} to go. Reviews run one at a time
+                in the background; you&apos;ll get a DM when the batch finishes.
+              </p>
+            </div>
+            <CancelBatchButton
+              guildId={guildId}
+              batchId={batch.batchId}
+              pendingCount={batch.pending}
+            />
+          </div>
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+            <div
+              className="h-full rounded-full bg-[color:var(--color-brand-600)] transition-all"
+              style={{
+                width: `${Math.round(
+                  ((batch.done + batch.failed + batch.cancelled) / batch.total) * 100
+                )}%`,
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="mt-6 space-y-4">
         <NewReviewForm guildId={guildId} />
+        <BatchReviewForm
+          guildId={guildId}
+          roles={roles.map((r) => ({ id: r.id, name: r.name }))}
+        />
         <AiReviewPromptEditor
           guildId={guildId}
           initial={effectivePrompt}
@@ -70,60 +160,53 @@ export default async function AiReviewListPage({
         />
       </div>
 
-      <h2 className="mt-8 text-sm font-medium uppercase tracking-wide text-white/50">
-        Recent reviews
-      </h2>
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-3">
+          <h2 className="text-sm font-medium uppercase tracking-wide text-white/50">
+            {archivedView ? "Archived reviews" : "Recent reviews"}
+          </h2>
+          {(archivedCount > 0 || archivedView) && (
+            <Link
+              href={
+                archivedView
+                  ? `/dashboard/${guildId}/ai-review`
+                  : `/dashboard/${guildId}/ai-review?view=archived`
+              }
+              className="rounded-md bg-white/5 px-2 py-0.5 text-[11px] text-white/60 ring-1 ring-white/10 hover:bg-white/10 hover:text-white/85"
+            >
+              {archivedView ? "← Back to recent" : `Archived (${archivedCount})`}
+            </Link>
+          )}
+        </div>
+        <Link
+          href={`/dashboard/${guildId}/ai-review/report`}
+          className="text-sm text-[color:var(--color-brand-500)] hover:underline"
+        >
+          Fit report →
+        </Link>
+      </div>
       {jobs.length === 0 ? (
         <div className="mt-3 rounded-2xl border border-dashed border-white/10 p-10 text-center text-white/60">
-          No reviews yet. Start one above or from the leaderboard.
+          {archivedView
+            ? "Nothing archived yet."
+            : "No reviews yet. Start one above or from the leaderboard."}
         </div>
       ) : (
-        <ul className="mt-3 divide-y divide-white/5 overflow-hidden rounded-2xl ring-1 ring-white/10">
-          {jobs.map((j) => {
-            const reco = j.recommendation ? RECO[j.recommendation] : null;
-            const inProgress = j.status === "pending" || j.status === "running";
-            return (
-              <li key={j.id} className="bg-white/[0.02]">
-                <Link
-                  href={`/dashboard/${guildId}/ai-review/${j.id}`}
-                  className="flex items-center gap-3 px-4 py-3 hover:bg-white/[0.03]"
-                >
-                  <span
-                    className={`shrink-0 rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 ${
-                      reco
-                        ? reco.badge
-                        : inProgress
-                          ? "bg-white/5 text-white/60 ring-white/10"
-                          : "bg-red-400/10 text-red-300 ring-red-400/20"
-                    }`}
-                  >
-                    {reco
-                      ? reco.label
-                      : j.status === "failed"
-                        ? "failed"
-                        : j.status === "running"
-                          ? "running…"
-                          : "queued…"}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-white/90">
-                    {j.targetName ?? j.targetUserId}
-                  </span>
-                  {j.status === "done" && (
-                    <span className="hidden shrink-0 text-[11px] text-white/40 sm:inline">
-                      {j.messagesAnalyzed.toLocaleString()} msgs · {j.source}
-                    </span>
-                  )}
-                  <span className="shrink-0 text-[11px] text-white/40">
-                    <LocalTime iso={j.createdAt.toISOString()} />
-                  </span>
-                </Link>
-                {j.status === "failed" && j.error && (
-                  <p className="px-4 pb-3 text-[11px] text-red-300/80">{j.error}</p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <AiReviewList
+          guildId={guildId}
+          archivedView={archivedView}
+          jobs={jobs.map((j) => ({
+            id: j.id,
+            targetUserId: j.targetUserId,
+            targetName: j.targetName,
+            status: j.status,
+            recommendation: j.recommendation,
+            messagesAnalyzed: j.messagesAnalyzed,
+            source: j.source,
+            createdAtIso: j.createdAt.toISOString(),
+            error: j.error,
+          }))}
+        />
       )}
     </div>
   );

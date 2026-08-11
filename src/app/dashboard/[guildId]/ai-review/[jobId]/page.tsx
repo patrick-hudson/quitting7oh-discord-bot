@@ -95,6 +95,15 @@ export default async function AiReviewDetailPage({
         </div>
       )}
 
+      {job.status === "cancelled" && (
+        <div className="mt-8 rounded-2xl bg-white/[0.02] p-6 ring-1 ring-white/10">
+          <p className="text-sm font-medium text-white/80">Review skipped</p>
+          <p className="mt-1 text-sm text-white/55">
+            {job.error ?? "This review was cancelled before it ran."}
+          </p>
+        </div>
+      )}
+
       {job.status === "done" && (
         <>
           <div

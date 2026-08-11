@@ -480,6 +480,13 @@ model AiReviewJob {
   id      String @id @default(cuid())
   guildId String
 
+  // Set when this job was queued as part of a "review top members" batch run
+  // (see POST /api/guilds/[guildId]/ai-review/batch). Jobs sharing a batchId
+  // are tracked and cancelled together, the worker de-prioritizes them behind
+  // ad-hoc reviews, and the requester gets ONE summary DM when the whole batch
+  // finishes instead of one per job. null = ad-hoc single review.
+  batchId String?
+
   // Who is being reviewed and the (optional) slice of history considered.
   targetUserId String
   targetName   String? // resolved display name at review time, for the list UI
@@ -487,8 +494,16 @@ model AiReviewJob {
   untilAt      DateTime? // null = up to now
   channelIds   String[] // empty = all channels
 
-  // pending → running → done | failed
+  // pending → running → done | failed | cancelled (batch jobs only: cancelled
+  // via the portal, or skipped because the member left before their turn)
   status     String    @default("pending")
+
+  // Soft-hide from the default reviews list (bulk housekeeping in the portal).
+  // Archived reviews keep all their data — they still count for the batch
+  // feature's "recently reviewed" skip, timeline compares, and the fit report;
+  // they just leave the default list view. Only finished jobs (done | failed |
+  // cancelled) can be archived.
+  archivedAt DateTime?
   startedAt  DateTime?
   finishedAt DateTime?
   error      String?   @db.Text
@@ -513,6 +528,7 @@ model AiReviewJob {
   @@index([status, createdAt])
   @@index([guildId, createdAt])
   @@index([guildId, targetUserId, createdAt])
+  @@index([guildId, batchId])
 }
 
 // --- Auth.js (NextAuth v5) tables ---

@@ -46,10 +46,12 @@ export const POST = withErrors(async (
 
   const input = createSchema.parse(await req.json());
 
-  // One in-flight review per guild — bounds Claude spend and keeps the worker's
-  // Discord rate-limit budget sane. Double-clicks 409 instead of double-queuing.
+  // One in-flight ad-hoc review per guild — bounds Claude spend and keeps the
+  // worker's Discord rate-limit budget sane. Double-clicks 409 instead of
+  // double-queuing. Batch jobs don't count: the worker runs an ad-hoc review
+  // ahead of any queued batch work, so this stays responsive mid-batch.
   const inFlight = await prisma.aiReviewJob.count({
-    where: { guildId, status: { in: ["pending", "running"] } },
+    where: { guildId, status: { in: ["pending", "running"] }, batchId: null },
   });
   if (inFlight > 0) {
     return NextResponse.json(
