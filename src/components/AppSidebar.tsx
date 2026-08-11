@@ -68,34 +68,63 @@ export function AppSidebar({
   const router = useRouter();
 
   const base = `/dashboard/${currentGuildId}`;
-  // Order matches what most admins reach for; icons from lucide.
-  const items = [
-    { href: base, label: "Dashboard", icon: LayoutDashboard, exact: true },
-    { href: `${base}/posts`, label: "Posts", icon: CalendarClock },
-    { href: `${base}/posts/advanced`, label: "Bulk-edit posts", icon: Layers },
-    { href: `${base}/new`, label: "New post", icon: Plus },
-    { href: `${base}/leaderboard`, label: "Leaderboard", icon: Trophy },
-    { href: `${base}/ai-review`, label: "AI reviews", icon: Sparkles },
-    { href: `${base}/milestones`, label: "Milestones", icon: Award },
-    { href: `${base}/milestones/advanced`, label: "Bulk-edit templates", icon: Layers },
-    { href: `${base}/export`, label: "Export", icon: Download },
-    { href: `${base}/audit`, label: "Audit log", icon: ScrollText },
-    { href: `${base}/mod-log`, label: "Mod log", icon: Shield },
-    { href: `${base}/snapshots`, label: "Snapshots", icon: History },
-    { href: `${base}/defaults`, label: "Defaults", icon: MessageSquareText },
-    { href: `${base}/settings`, label: "Settings", icon: Settings },
+  // Grouped by job-to-be-done rather than one long flat list. Dashboard sits
+  // alone up top; each labeled group keeps its most-used entry first.
+  const groups: {
+    label: string | null;
+    items: { href: string; label: string; icon: typeof LayoutDashboard; exact?: boolean }[];
+  }[] = [
+    {
+      label: null,
+      items: [{ href: base, label: "Dashboard", icon: LayoutDashboard, exact: true }],
+    },
+    {
+      label: "Posting",
+      items: [
+        { href: `${base}/posts`, label: "Posts", icon: CalendarClock },
+        { href: `${base}/new`, label: "New post", icon: Plus },
+        { href: `${base}/posts/advanced`, label: "Bulk-edit posts", icon: Layers },
+        { href: `${base}/defaults`, label: "Defaults", icon: MessageSquareText },
+      ],
+    },
+    {
+      label: "Members",
+      items: [
+        { href: `${base}/leaderboard`, label: "Leaderboard", icon: Trophy },
+        { href: `${base}/milestones`, label: "Milestones", icon: Award },
+        { href: `${base}/milestones/advanced`, label: "Bulk-edit templates", icon: Layers },
+        { href: `${base}/ai-review`, label: "AI reviews", icon: Sparkles },
+      ],
+    },
+    {
+      label: "Records",
+      items: [
+        { href: `${base}/audit`, label: "Audit log", icon: ScrollText },
+        { href: `${base}/mod-log`, label: "Mod log", icon: Shield },
+        { href: `${base}/snapshots`, label: "Snapshots", icon: History },
+        { href: `${base}/export`, label: "Export", icon: Download },
+      ],
+    },
+    {
+      label: "Server",
+      items: [{ href: `${base}/settings`, label: "Settings", icon: Settings }],
+    },
   ];
 
   // Pick the single best-matching item so /posts/advanced highlights only
   // "Bulk-edit posts", not also "Posts" (which would otherwise prefix-match).
-  const activeItem = items.reduce<(typeof items)[number] | null>((best, item) => {
-    const matches = item.exact
-      ? pathname === item.href
-      : pathname === item.href || pathname.startsWith(item.href + "/");
-    if (!matches) return best;
-    if (!best || item.href.length > best.href.length) return item;
-    return best;
-  }, null);
+  const allItems = groups.flatMap((g) => g.items);
+  const activeItem = allItems.reduce<(typeof allItems)[number] | null>(
+    (best, item) => {
+      const matches = item.exact
+        ? pathname === item.href
+        : pathname === item.href || pathname.startsWith(item.href + "/");
+      if (!matches) return best;
+      if (!best || item.href.length > best.href.length) return item;
+      return best;
+    },
+    null
+  );
 
   return (
     <Sidebar variant="inset" collapsible="icon">
@@ -162,27 +191,29 @@ export function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
-          <SidebarMenu>
-            {items.map((item) => {
-              const { href, label, icon: Icon } = item;
-              const active = item === activeItem;
-              return (
-                <SidebarMenuItem key={href}>
-                  <SidebarMenuButton
-                    isActive={active}
-                    tooltip={label}
-                    render={<Link href={href} />}
-                  >
-                    <Icon />
-                    <span>{label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              );
-            })}
-          </SidebarMenu>
-        </SidebarGroup>
+        {groups.map((group) => (
+          <SidebarGroup key={group.label ?? "top"}>
+            {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
+            <SidebarMenu>
+              {group.items.map((item) => {
+                const { href, label, icon: Icon } = item;
+                const active = item === activeItem;
+                return (
+                  <SidebarMenuItem key={href}>
+                    <SidebarMenuButton
+                      isActive={active}
+                      tooltip={label}
+                      render={<Link href={href} />}
+                    >
+                      <Icon />
+                      <span>{label}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarFooter>
