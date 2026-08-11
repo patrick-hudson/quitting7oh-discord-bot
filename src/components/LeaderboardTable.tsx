@@ -9,6 +9,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { LocalTime } from "@/components/LocalTime";
+import { AiReviewButton } from "@/components/AiReviewControls";
 
 type Row = {
   authorId: string;
@@ -153,11 +154,19 @@ export function LeaderboardTable({
                 {open && (
                   <tr className="bg-black/20">
                     <td colSpan={colSpan} className="px-6 py-3">
-                      <ChannelBreakdown
-                        data={bd}
-                        channelNames={channelNames}
-                        total={r.total}
-                      />
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                        <ChannelBreakdown
+                          data={bd}
+                          channelNames={channelNames}
+                          total={r.total}
+                        />
+                        <AiReviewButton
+                          className="shrink-0"
+                          guildId={guildId}
+                          targetUserId={r.authorId}
+                          targetName={r.name}
+                        />
+                      </div>
                     </td>
                   </tr>
                 )}

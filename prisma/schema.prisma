@@ -62,6 +62,12 @@ model Guild {
   // ARCHIVE_DIR on disk. See src/bot/archive-worker.ts and BACKUPS.md.
   archiveEnabled Boolean @default(false)
 
+  // Full override for the AI contributor-fit reviewer's system prompt. null =
+  // use the baked-in default rubric in src/lib/ai-review.ts. The whole prompt
+  // is editable (persona + criteria + guardrails), so keep the guardrails when
+  // editing. See src/bot/ai-review-worker.ts.
+  aiReviewPrompt String? @db.Text
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -462,6 +468,51 @@ model LeaderboardCache {
   computing        Boolean   @default(false)
   refreshRequested Boolean   @default(false)
   updatedAt        DateTime  @updatedAt
+}
+
+// AI contributor-fit review jobs. The portal enqueues one (status=pending);
+// the ai-review worker (src/bot/ai-review-worker.ts) gathers the target's
+// message history (archive JSONL first, live Discord scan as a fallback),
+// sends it to Claude framed as a professional reviewer, and writes the
+// structured verdict back. Kept indefinitely so reviews of the same member
+// across time can be compared. Mirrors UserExportJob's queue shape.
+model AiReviewJob {
+  id      String @id @default(cuid())
+  guildId String
+
+  // Who is being reviewed and the (optional) slice of history considered.
+  targetUserId String
+  targetName   String? // resolved display name at review time, for the list UI
+  sinceAt      DateTime? // null = from the beginning
+  untilAt      DateTime? // null = up to now
+  channelIds   String[] // empty = all channels
+
+  // pending → running → done | failed
+  status     String    @default("pending")
+  startedAt  DateTime?
+  finishedAt DateTime?
+  error      String?   @db.Text
+
+  // Results (null until done).
+  // verdict: { recommendation, confidence, summary, strengths[], concerns[],
+  //   crisisFlag, ... } — see AiVerdict in src/lib/ai-review.ts.
+  verdict          Json?
+  recommendation   String? // denormalized from verdict for list badges + sorting
+  model            String? // model id used for the final synthesis
+  source           String? // "archive" | "scan" — where the messages came from
+  messagesAnalyzed Int     @default(0)
+  inputTokens      Int     @default(0)
+  outputTokens     Int     @default(0)
+  // Snapshot of the exact system prompt used, so a stored review is
+  // reproducible even after the guild's prompt override changes later.
+  promptSnapshot String? @db.Text
+
+  requestedBy String // Discord id of the admin who asked for it
+  createdAt   DateTime @default(now())
+
+  @@index([status, createdAt])
+  @@index([guildId, createdAt])
+  @@index([guildId, targetUserId, createdAt])
 }
 
 // --- Auth.js (NextAuth v5) tables ---

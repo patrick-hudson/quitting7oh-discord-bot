@@ -24,6 +24,7 @@ import { runArchiveWorker } from "./archive-worker";
 import { runRestoreWorker } from "./restore-worker";
 import { runSnapshotWorker } from "./snapshot-worker";
 import { runLeaderboardWorker } from "./leaderboard-worker";
+import { runAiReviewWorker } from "./ai-review-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -115,6 +116,7 @@ async function main() {
     runRestoreWorker();
     runSnapshotWorker();
     runLeaderboardWorker();
+    runAiReviewWorker(client);
   });
 
   client.on(Events.GuildCreate, async (g) => {
