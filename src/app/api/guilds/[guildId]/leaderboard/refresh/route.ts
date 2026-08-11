@@ -6,18 +6,22 @@ import { NextResponse } from "next/server";
 import { withErrors } from "@/lib/api";
 import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 
 export const POST = withErrors(async (
   _req: Request,
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
-  await requireGuildAccess(guildId);
+  const session = await requireGuildAccess(guildId);
 
   await prisma.leaderboardCache.upsert({
     where: { guildId },
     create: { guildId, refreshRequested: true },
     update: { refreshRequested: true },
+  });
+  audit(guildId, "leaderboard.refresh_requested", "Leaderboard refresh requested", {
+    by: session.user.discordId,
   });
   return NextResponse.json({ ok: true });
 });

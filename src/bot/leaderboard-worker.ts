@@ -5,6 +5,7 @@
 // take 15-30s; here it runs in the background where latency doesn't matter.
 
 import { prisma } from "@/lib/db";
+import { audit } from "@/lib/audit";
 import { computeLeaderboard } from "@/lib/leaderboard";
 import type { Prisma } from "@prisma/client";
 
@@ -48,6 +49,10 @@ async function tick() {
       cache.generatedAt === null ||
       cache.generatedAt < staleBefore;
     if (!needs) continue;
+    // A manual "Refresh" click sets refreshRequested; otherwise this is a
+    // scheduled/stale rebuild. Only manual runs get their own started-audit —
+    // the manual request was already logged by the API route.
+    const trigger = cache?.refreshRequested ? "manual" : "scheduled";
 
     await prisma.leaderboardCache.upsert({
       where: { guildId: g.id },
@@ -65,8 +70,21 @@ async function tick() {
         },
       });
       console.log(`[leaderboard] refreshed ${g.id} (${data.rows.length} rows)`);
+      audit(
+        g.id,
+        "leaderboard.refreshed",
+        `Leaderboard rebuilt (${trigger}) — ${data.rows.length} member(s)`,
+        { trigger, rows: data.rows.length }
+      );
     } catch (err) {
       console.error(`[leaderboard] compute failed for ${g.id}:`, err);
+      audit(
+        g.id,
+        "leaderboard.refresh_failed",
+        `Leaderboard rebuild failed (${trigger})`,
+        { trigger, error: (err as Error).message?.slice(0, 500) },
+        "error"
+      );
       await prisma.leaderboardCache
         .update({ where: { guildId: g.id }, data: { computing: false } })
         .catch(() => {});
