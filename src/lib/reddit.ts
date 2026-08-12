@@ -1,15 +1,25 @@
-// Minimal, credential-free Reddit reader for the new-post announcer.
+// Reddit reader for the new-post announcer. Two modes:
 //
-// Reads a subreddit's public Atom feed (/r/<sub>/new.rss) — no API key, no
-// OAuth. Reddit may throttle unauthenticated requests from datacenter IPs, so
-// we poll politely (see REDDIT_POLL_SECONDS) and send an honest, descriptive
-// User-Agent per Reddit's API rules. We never disguise the request as a browser
-// — that violates Reddit's policy and risks an account/IP ban.
+//   - OAuth (preferred): when REDDIT_CLIENT_ID + REDDIT_CLIENT_SECRET are set,
+//     authenticates app-only (client_credentials) and reads the JSON listing
+//     from oauth.reddit.com. The free tier allows 100 requests/minute — far
+//     above what the poller needs — and is not subject to the aggressive
+//     anonymous throttling that 429s datacenter IPs.
+//   - Public RSS (fallback): credential-free Atom feed (/r/<sub>/new.rss).
+//     Works fine from residential IPs but Reddit throttles anonymous requests
+//     from server/datacenter IPs hard, so expect intermittent 429s there.
+//
+// Both modes poll politely (see REDDIT_POLL_SECONDS) and send an honest,
+// descriptive User-Agent per Reddit's API rules. We never disguise the request
+// as a browser — that violates Reddit's policy and risks an account/IP ban.
 //
 // Env:
-//   REDDIT_USER_AGENT  descriptive UA; Reddit throttles generic/missing ones.
+//   REDDIT_USER_AGENT    descriptive UA; Reddit throttles generic/missing ones.
+//   REDDIT_CLIENT_ID     from a "script" app at reddit.com/prefs/apps (optional)
+//   REDDIT_CLIENT_SECRET the app's secret (optional; both or neither)
 
 const PUBLIC_BASE = "https://www.reddit.com";
+const OAUTH_BASE = "https://oauth.reddit.com";
 
 // Reddit asks for a unique, descriptive User-Agent in the format
 // "<platform>:<app id>:<version> (by /u/<username>)". Operators should set
@@ -33,7 +43,14 @@ export type RedditPost = {
 };
 
 // Fetch the newest submissions for a subreddit, newest-first (feed order).
+// Uses the authenticated JSON API when credentials are configured, else the
+// public RSS feed.
 export async function fetchNewPosts(subreddit: string): Promise<RedditPost[]> {
+  if (hasOauthCreds()) return fetchViaOauth(subreddit);
+  return fetchViaRss(subreddit);
+}
+
+async function fetchViaRss(subreddit: string): Promise<RedditPost[]> {
   const url = `${PUBLIC_BASE}/r/${encodeURIComponent(subreddit)}/new/.rss`;
   const res = await fetch(url, {
     headers: { "User-Agent": userAgent(), Accept: "application/atom+xml" },
@@ -43,6 +60,100 @@ export async function fetchNewPosts(subreddit: string): Promise<RedditPost[]> {
   }
   return parseAtomFeed(await res.text());
 }
+
+// ---------------------------------------------------------------------------
+// OAuth (app-only) mode
+// ---------------------------------------------------------------------------
+
+function hasOauthCreds(): boolean {
+  return Boolean(process.env.REDDIT_CLIENT_ID && process.env.REDDIT_CLIENT_SECRET);
+}
+
+// App-only bearer token, cached until shortly before expiry. Reddit issues
+// ~1h tokens; a failed refresh throws and the poller just retries next tick.
+let cachedToken: { token: string; expiresAtMs: number } | null = null;
+
+async function getAppToken(forceRefresh = false): Promise<string> {
+  if (!forceRefresh && cachedToken && Date.now() < cachedToken.expiresAtMs) {
+    return cachedToken.token;
+  }
+  const basic = Buffer.from(
+    `${process.env.REDDIT_CLIENT_ID}:${process.env.REDDIT_CLIENT_SECRET}`
+  ).toString("base64");
+  const res = await fetch(`${PUBLIC_BASE}/api/v1/access_token`, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${basic}`,
+      "User-Agent": userAgent(),
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+  });
+  if (!res.ok) {
+    throw new Error(
+      `reddit oauth token ${res.status}: ${(await res.text()).slice(0, 200)}`
+    );
+  }
+  const data = (await res.json()) as { access_token?: string; expires_in?: number };
+  if (!data.access_token) throw new Error("reddit oauth token: no access_token in response");
+  cachedToken = {
+    token: data.access_token,
+    // Refresh a minute early so we never race the expiry.
+    expiresAtMs: Date.now() + (data.expires_in ?? 3600) * 1000 - 60_000,
+  };
+  return cachedToken.token;
+}
+
+async function fetchViaOauth(subreddit: string): Promise<RedditPost[]> {
+  const url = `${OAUTH_BASE}/r/${encodeURIComponent(subreddit)}/new.json?limit=25&raw_json=1`;
+  let res = await oauthGet(url, await getAppToken());
+  if (res.status === 401) {
+    // Token revoked/expired early — mint a fresh one and retry once.
+    res = await oauthGet(url, await getAppToken(true));
+  }
+  if (!res.ok) {
+    throw new Error(`reddit ${url} ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  }
+  const listing = (await res.json()) as {
+    data?: { children?: Array<{ data?: RedditListingChild }> };
+  };
+  const children = listing.data?.children ?? [];
+  const posts: RedditPost[] = [];
+  for (const c of children) {
+    const d = c.data;
+    if (!d?.id) continue;
+    posts.push({
+      id: d.id,
+      title: d.title || "(untitled)",
+      author: d.author || "[deleted]",
+      permalink: d.permalink ? `${PUBLIC_BASE}${d.permalink}` : `${PUBLIC_BASE}/r/${subreddit}`,
+      createdAt: d.created_utc ? new Date(d.created_utc * 1000) : new Date(),
+      // selftext is markdown; fine as-is for a short embed snippet. Empty for
+      // link/image posts, matching the RSS path's behavior.
+      body: (d.selftext ?? "").trim(),
+    });
+  }
+  return posts;
+}
+
+function oauthGet(url: string, token: string): Promise<Response> {
+  return fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "User-Agent": userAgent(),
+      Accept: "application/json",
+    },
+  });
+}
+
+type RedditListingChild = {
+  id?: string;
+  title?: string;
+  author?: string;
+  permalink?: string; // site-relative, e.g. "/r/foo/comments/..."
+  created_utc?: number; // seconds
+  selftext?: string;
+};
 
 // Minimal Atom parser for Reddit's RSS. Reddit emits stable, well-formed Atom,
 // so a targeted per-<entry> extraction is enough — we avoid an XML dependency.
