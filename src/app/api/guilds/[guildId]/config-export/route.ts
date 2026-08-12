@@ -35,7 +35,12 @@ export const GET = withErrors(async (
       // (importing a wrong value could lock every admin out of the portal).
       adminRoleId: guild.adminRoleId,
       redditEnabled: guild.redditEnabled,
-      redditSubreddit: guild.redditSubreddit,
+      redditSubreddits:
+        guild.redditSubreddits.length > 0
+          ? guild.redditSubreddits
+          : guild.redditSubreddit
+            ? [guild.redditSubreddit]
+            : [],
       redditChannelId: guild.redditChannelId,
       leaveEnabled: guild.leaveEnabled,
       leaveChannelId: guild.leaveChannelId,

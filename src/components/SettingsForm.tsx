@@ -27,7 +27,7 @@ export function SettingsForm({
     timezone: string;
     adminRoleId: string;
     redditEnabled: boolean;
-    redditSubreddit: string;
+    redditSubreddits: string[];
     redditChannelId: string;
     leaveEnabled: boolean;
     leaveChannelId: string;
@@ -41,7 +41,8 @@ export function SettingsForm({
   const [timezone, setTimezone] = useState(initial.timezone);
   const [adminRoleId, setAdminRoleId] = useState(initial.adminRoleId);
   const [redditEnabled, setRedditEnabled] = useState(initial.redditEnabled);
-  const [redditSubreddit, setRedditSubreddit] = useState(initial.redditSubreddit);
+  const [redditSubreddits, setRedditSubreddits] = useState(initial.redditSubreddits);
+  const [subredditDraft, setSubredditDraft] = useState("");
   const [redditChannelId, setRedditChannelId] = useState(initial.redditChannelId);
   const [leaveEnabled, setLeaveEnabled] = useState(initial.leaveEnabled);
   const [leaveChannelId, setLeaveChannelId] = useState(initial.leaveChannelId);
@@ -51,11 +52,51 @@ export function SettingsForm({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Normalize one typed/pasted subreddit: trim, strip "r/" or a full URL
+  // prefix. Comma/space-separated pastes are split into several.
+  function parseSubreddits(raw: string): string[] {
+    return raw
+      .split(/[,\s]+/)
+      .map((s) =>
+        s
+          .trim()
+          .replace(/^https?:\/\/(www\.)?reddit\.com\//i, "")
+          .replace(/^\/?r\//i, "")
+          .replace(/\/.*$/, "")
+      )
+      .filter(Boolean);
+  }
+
+  function addSubreddits(raw: string) {
+    const parsed = parseSubreddits(raw);
+    if (parsed.length === 0) return;
+    setRedditSubreddits((prev) => {
+      const seen = new Set(prev.map((s) => s.toLowerCase()));
+      const next = [...prev];
+      for (const s of parsed) {
+        if (!seen.has(s.toLowerCase())) {
+          seen.add(s.toLowerCase());
+          next.push(s);
+        }
+      }
+      return next;
+    });
+    setSubredditDraft("");
+  }
+
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError(null);
     setSaved(false);
+    // Anything still sitting in the draft box counts — nobody should lose a
+    // subreddit because they forgot to press Enter before Save.
+    const draft = parseSubreddits(subredditDraft);
+    const seen = new Set(redditSubreddits.map((s) => s.toLowerCase()));
+    const allSubreddits = [
+      ...redditSubreddits,
+      ...draft.filter((s) => !seen.has(s.toLowerCase())),
+    ];
     const res = await fetch(`/api/guilds/${guildId}/settings`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -63,8 +104,7 @@ export function SettingsForm({
         timezone,
         adminRoleId: adminRoleId || null,
         redditEnabled,
-        // Strip a leading "r/" if the user pastes it; server validates the rest.
-        redditSubreddit: redditSubreddit.trim().replace(/^\/?r\//i, ""),
+        redditSubreddits: allSubreddits,
         redditChannelId: redditChannelId || null,
         leaveEnabled,
         leaveChannelId: leaveChannelId || null,
@@ -79,6 +119,8 @@ export function SettingsForm({
       return;
     }
     setSaved(true);
+    setRedditSubreddits(allSubreddits);
+    setSubredditDraft("");
     router.refresh();
   }
 
@@ -134,7 +176,8 @@ export function SettingsForm({
             Reddit announcements
           </h2>
           <p className="mt-1 text-xs text-white/40">
-            Post an embed to a channel whenever your subreddit gets a new submission.
+            Post an embed to a channel whenever a watched subreddit gets a new
+            submission. All watched subreddits announce into the same channel.
           </p>
         </div>
 
@@ -148,18 +191,57 @@ export function SettingsForm({
         </label>
 
         <div>
-          <label className="mb-1 block text-sm text-white/80">Subreddit</label>
+          <label className="mb-1 block text-sm text-white/80">Subreddits</label>
+          {redditSubreddits.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {redditSubreddits.map((s) => (
+                <span
+                  key={s.toLowerCase()}
+                  className="inline-flex items-center gap-1 rounded-full bg-white/5 py-1 pl-2.5 pr-1 text-xs text-white/80 ring-1 ring-white/10"
+                >
+                  r/{s}
+                  <button
+                    type="button"
+                    aria-label={`Remove r/${s}`}
+                    onClick={() =>
+                      setRedditSubreddits((prev) => prev.filter((x) => x !== s))
+                    }
+                    className="rounded-full px-1 text-white/40 hover:bg-white/10 hover:text-white/90"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <div className="flex items-center gap-2">
             <span className="text-sm text-white/40">r/</span>
             <input
-              value={redditSubreddit}
-              onChange={(e) => setRedditSubreddit(e.target.value)}
-              placeholder="quitting7oh"
+              value={subredditDraft}
+              onChange={(e) => setSubredditDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  addSubreddits(subredditDraft);
+                }
+              }}
+              onBlur={() => addSubreddits(subredditDraft)}
+              placeholder={redditSubreddits.length > 0 ? "add another…" : "quitting7oh"}
               className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
             />
+            <button
+              type="button"
+              onClick={() => addSubreddits(subredditDraft)}
+              disabled={!subredditDraft.trim()}
+              className="shrink-0 rounded-lg bg-white/5 px-3 py-2 text-sm text-white/70 ring-1 ring-white/10 hover:bg-white/10 disabled:opacity-40"
+            >
+              Add
+            </button>
           </div>
           <p className="mt-1 text-xs text-white/40">
-            Just the name — no <code className="text-white/60">r/</code> needed.
+            Up to 10. Type a name (no <code className="text-white/60">r/</code>{" "}
+            needed) and press Enter — pasting a comma-separated list or full
+            reddit URLs works too.
           </p>
         </div>
 

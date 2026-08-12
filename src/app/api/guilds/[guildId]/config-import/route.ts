@@ -22,7 +22,10 @@ const configSchema = z.object({
     .object({
       timezone: z.string().min(1),
       redditEnabled: z.boolean(),
-      redditSubreddit: z.string().nullable(),
+      // Current exports carry a list; older export files carry the single
+      // redditSubreddit — accept both and merge on import.
+      redditSubreddits: z.array(z.string().min(1).max(21)).max(10).optional(),
+      redditSubreddit: z.string().nullable().optional(),
       redditChannelId: snowflake.nullable(),
       leaveEnabled: z.boolean(),
       leaveChannelId: snowflake.nullable(),
@@ -97,12 +100,24 @@ export const POST = withErrors(async (
 
   if (sections.settings) {
     const s = config.settings;
+    // New exports carry redditSubreddits; legacy files only redditSubreddit.
+    const subreddits =
+      s.redditSubreddits && s.redditSubreddits.length > 0
+        ? s.redditSubreddits
+        : s.redditSubreddit
+          ? [s.redditSubreddit]
+          : [];
     await prisma.guild.update({
       where: { id: guildId },
       data: {
         timezone: s.timezone,
         redditEnabled: s.redditEnabled,
-        redditSubreddit: s.redditSubreddit,
+        redditSubreddits: subreddits,
+        // Fresh marks: imported subs re-seed their baselines on the next poll
+        // (announcing nothing) rather than replaying against stale marks.
+        redditLastPostAts: {},
+        redditSubreddit: null,
+        redditLastPostAt: null,
         redditChannelId: s.redditChannelId,
         leaveEnabled: s.leaveEnabled,
         leaveChannelId: s.leaveChannelId,

@@ -21,15 +21,23 @@ model Guild {
   // null = only BOOTSTRAP_ADMIN_USER_IDS can manage this guild.
   adminRoleId String?
 
-  // Reddit new-post announcements. One watched subreddit per guild: when
-  // redditEnabled is true, the bot polls /r/<redditSubreddit>/new and posts
-  // each new submission to redditChannelId as an embed.
-  redditEnabled   Boolean @default(false)
-  redditSubreddit String? // subreddit name without the "r/" prefix
-  redditChannelId String? // Discord channel snowflake to announce into
-  // High-water mark: the created time of the newest submission already
-  // announced. Only items strictly newer are posted. null until the first poll
-  // seeds a baseline (which announces nothing, to avoid a backlog flood).
+  // Reddit new-post announcements. One or more watched subreddits, all posting
+  // into one channel: when redditEnabled is true, the bot polls each
+  // /r/<sub>/new and posts new submissions to redditChannelId as embeds.
+  redditEnabled    Boolean  @default(false)
+  redditSubreddits String[] @default([]) // names without the "r/" prefix
+  redditChannelId  String? // Discord channel snowflake to announce into
+  // Per-subreddit high-water marks: JSON map of lowercased subreddit name →
+  // ISO timestamp of the newest submission already announced. Only items
+  // strictly newer are posted. A subreddit with no entry gets its baseline
+  // seeded on the next poll (which announces nothing — no backlog flood), so
+  // marks are independent and adding a sub later is safe.
+  redditLastPostAts Json @default("{}")
+  // Legacy single-subreddit config, superseded by the fields above. The poller
+  // lazily migrates these into redditSubreddits/redditLastPostAts on its first
+  // tick after deploy; kept so `prisma db push` doesn't drop the live values
+  // mid-upgrade. Safe to remove a release after everything has migrated.
+  redditSubreddit  String?
   redditLastPostAt DateTime?
 
   // Per-guild override for the scheduler's reminder-template roster (used when

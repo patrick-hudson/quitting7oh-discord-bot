@@ -10,14 +10,12 @@ const settingsSchema = z.object({
   timezone: z.string().min(1),
   adminRoleId: z.union([z.string().regex(/^\d{17,21}$/), z.null()]),
   redditEnabled: z.boolean(),
-  // Subreddit name without "r/". Reddit allows letters, digits, underscores.
-  // Empty string from the form normalizes to null (not configured).
-  redditSubreddit: z
-    .string()
-    .trim()
-    .regex(/^[A-Za-z0-9_]{1,21}$/, "Invalid subreddit name")
-    .nullable()
-    .or(z.literal("").transform(() => null)),
+  // Subreddit names without "r/". Reddit allows letters, digits, underscores.
+  // All announce into the one redditChannelId; capped to keep polling polite.
+  redditSubreddits: z
+    .array(z.string().trim().regex(/^[A-Za-z0-9_]{1,21}$/, "Invalid subreddit name"))
+    .max(10, "At most 10 subreddits")
+    .default([]),
   redditChannelId: z.union([z.string().regex(/^\d{17,21}$/), z.literal(""), z.null()]),
   leaveEnabled: z.boolean(),
   leaveChannelId: z.union([z.string().regex(/^\d{17,21}$/), z.literal(""), z.null()]),
@@ -34,11 +32,18 @@ export const PATCH = withErrors(async (
 
   const input = settingsSchema.parse(await req.json());
 
-  const subreddit = input.redditSubreddit || null;
+  // Dedupe case-insensitively, keeping the first spelling the admin typed.
+  const seen = new Set<string>();
+  const subreddits = input.redditSubreddits.filter((s) => {
+    const key = s.toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   const redditChannelId = input.redditChannelId || null;
-  if (input.redditEnabled && (!subreddit || !redditChannelId)) {
+  if (input.redditEnabled && (subreddits.length === 0 || !redditChannelId)) {
     return NextResponse.json(
-      { error: "Pick a subreddit and a channel to enable Reddit announcements." },
+      { error: "Pick at least one subreddit and a channel to enable Reddit announcements." },
       { status: 400 }
     );
   }
@@ -51,13 +56,25 @@ export const PATCH = withErrors(async (
     );
   }
 
-  // If the watched subreddit changes, reset the high-water mark so the new sub
-  // re-seeds its baseline (and doesn't replay old posts against a stale mark).
+  // Prune high-water marks for subreddits that were removed; kept subs keep
+  // their mark, newly added ones seed a fresh baseline on the next poll.
   const existing = await prisma.guild.findUnique({
     where: { id: guildId },
-    select: { redditSubreddit: true },
+    select: { redditLastPostAts: true, redditSubreddit: true, redditLastPostAt: true },
   });
-  const subredditChanged = (existing?.redditSubreddit ?? null) !== subreddit;
+  const oldMarks = existing?.redditLastPostAts;
+  const marks: Record<string, string> = {};
+  if (oldMarks && typeof oldMarks === "object" && !Array.isArray(oldMarks)) {
+    for (const [k, v] of Object.entries(oldMarks)) {
+      if (typeof v === "string" && seen.has(k)) marks[k] = v;
+    }
+  }
+  // Legacy single-sub config not yet migrated by the poller: if that sub is
+  // being kept, carry its old mark over so nothing is skipped or re-announced.
+  const legacyKey = existing?.redditSubreddit?.toLowerCase();
+  if (legacyKey && existing?.redditLastPostAt && seen.has(legacyKey) && !marks[legacyKey]) {
+    marks[legacyKey] = existing.redditLastPostAt.toISOString();
+  }
 
   const updated = await prisma.guild.update({
     where: { id: guildId },
@@ -65,13 +82,17 @@ export const PATCH = withErrors(async (
       timezone: input.timezone,
       adminRoleId: input.adminRoleId,
       redditEnabled: input.redditEnabled,
-      redditSubreddit: subreddit,
+      redditSubreddits: subreddits,
+      redditLastPostAts: marks,
       redditChannelId,
+      // The new list supersedes any legacy single-sub config — clear it so the
+      // poller's lazy migration can't resurrect a removed subreddit.
+      redditSubreddit: null,
+      redditLastPostAt: null,
       leaveEnabled: input.leaveEnabled,
       leaveChannelId,
       welcomeDmEnabled: input.welcomeDmEnabled,
       archiveEnabled: input.archiveEnabled,
-      ...(subredditChanged ? { redditLastPostAt: null } : {}),
     },
   });
 

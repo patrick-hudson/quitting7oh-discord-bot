@@ -28,7 +28,14 @@ export default async function SettingsPage({
             timezone: guild.timezone,
             adminRoleId: guild.adminRoleId ?? "",
             redditEnabled: guild.redditEnabled,
-            redditSubreddit: guild.redditSubreddit ?? "",
+            // Legacy single-sub config (pre-list) shows up in the list until
+            // its first save or the poller's lazy migration, whichever is first.
+            redditSubreddits:
+              guild.redditSubreddits.length > 0
+                ? guild.redditSubreddits
+                : guild.redditSubreddit
+                  ? [guild.redditSubreddit]
+                  : [],
             redditChannelId: guild.redditChannelId ?? "",
             leaveEnabled: guild.leaveEnabled,
             leaveChannelId: guild.leaveChannelId ?? "",
