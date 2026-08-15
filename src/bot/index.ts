@@ -27,6 +27,7 @@ import { runLeaderboardWorker } from "./leaderboard-worker";
 import { runAiReviewWorker } from "./ai-review-worker";
 import { runStatsWorker } from "./stats-worker";
 import { runReactionBackfill } from "./reaction-backfill";
+import { runJoinBackfill } from "./join-backfill";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -136,6 +137,29 @@ async function main() {
       });
   });
 
+  // Join logging for the stats page — live counterpart of the archive join
+  // backfill (join system messages are off in this guild, so the gateway is
+  // the only live source). The unique (guildId, userId, joinedAt) constraint
+  // absorbs redeliveries and any overlap with backfilled system messages.
+  client.on(Events.GuildMemberAdd, (member) => {
+    prisma.memberJoinEvent
+      .create({
+        data: {
+          guildId: member.guild.id,
+          userId: member.id,
+          username: member.user.globalName || member.user.username,
+          source: "gateway",
+          joinedAt: member.joinedAt ?? new Date(),
+        },
+      })
+      .catch((err: unknown) => {
+        const code = (err as { code?: string } | null)?.code;
+        if (code !== "P2002") {
+          console.warn("[bot] join log failed:", err);
+        }
+      });
+  });
+
   client.once(Events.ClientReady, async (c) => {
     console.log(`[bot] logged in as ${c.user.tag} (${c.user.id})`);
     // Upsert all known guilds on startup so the portal has them right away.
@@ -156,6 +180,7 @@ async function main() {
     runAiReviewWorker(client);
     runStatsWorker();
     runReactionBackfill();
+    runJoinBackfill();
   });
 
   client.on(Events.GuildCreate, async (g) => {

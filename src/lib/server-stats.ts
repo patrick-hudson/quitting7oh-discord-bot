@@ -60,8 +60,12 @@ export type ServerStatsData = {
   memberSeries: Array<{ date: string; members: number }>;
   // Weekly join/leave derived from consecutive weekly snapshots.
   joinLeave: Array<{ weekStart: string; joins: number; leaves: number }>;
-  // Of members who joined in month M (and are still here), how many posted
-  // within 7 days of joining.
+  // New members per month, all-time. Merged from MemberJoinEvent (archived
+  // type-7 system messages + live gateway joins — includes people who later
+  // left) and current members' joined_at for any gap between the two.
+  joinsPerMonth: Array<{ month: string; joins: number }>;
+  // Of everyone who joined in month M — including joiners who later left —
+  // how many posted within 7 days of joining.
   activation: Array<{ month: string; joined: number; posted7d: number }>;
   // Classic retention cohort grid: cohort = month of first message; active[n]
   // = distinct cohort members who posted in cohort month + n (null = future).
@@ -278,25 +282,55 @@ export async function computeServerStats(guildId: string): Promise<ServerStatsDa
   `;
   const firstPostAt = new Map(firstPosts.map((r) => [r.authorId, r.first]));
 
-  // Activation: current members who joined in the last 6 months, by month.
-  // Only months after message tracking began are meaningful (earlier cohorts
-  // would all read 0% purely because we have no messages from back then), and
-  // rejoiners whose first post predates their latest join date are skipped —
-  // "posted within 7 days of joining" should mean after joining.
-  const activationMap = new Map<string, { joined: number; posted7d: number }>();
-  const sixMonthsAgo = Date.now() - 183 * 86_400_000;
-  const trackingStartMonth = agg?.first ? agg.first.toISOString().slice(0, 7) : null;
+  // --- Joiners: recovered join events + current members for the gap --------
+  // MemberJoinEvent covers archived system messages (all-time, including
+  // people who later left) and live gateway joins. Current members' joined_at
+  // fills whatever window neither source saw (e.g. after system messages were
+  // turned off, before the gateway listener deployed) — but only for members
+  // still present, so gap months undercount. Dedupe by user + local day.
+  const joinEvents = await prisma.$queryRaw<{ userId: string; joinedAt: Date }[]>`
+    SELECT "userId" AS "userId", "joinedAt" AS "joinedAt"
+    FROM "MemberJoinEvent"
+    WHERE "guildId" = ${guildId}
+    ORDER BY "joinedAt"
+  `;
+  const localDay = (d: Date) => d.toLocaleDateString("en-CA", { timeZone: tz });
+  const joiners: Array<{ userId: string; joinedAt: Date }> = [...joinEvents];
+  const seenJoins = new Set(joinEvents.map((j) => `${j.userId}|${localDay(j.joinedAt)}`));
   for (const m of members) {
     if (!m.joined_at) continue;
     const joined = new Date(m.joined_at);
-    if (joined.getTime() < sixMonthsAgo) continue;
-    const key = m.joined_at.slice(0, 7);
+    if (!seenJoins.has(`${m.user.id}|${localDay(joined)}`)) {
+      joiners.push({ userId: m.user.id, joinedAt: joined });
+    }
+  }
+
+  const joinsMonthly = new Map<string, number>();
+  for (const j of joiners) {
+    const key = localDay(j.joinedAt).slice(0, 7);
+    joinsMonthly.set(key, (joinsMonthly.get(key) ?? 0) + 1);
+  }
+  const joinsPerMonth = [...joinsMonthly.entries()]
+    .map(([month, joins]) => ({ month, joins }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+
+  // Activation: of everyone who joined in month M (last 12 months, and only
+  // months after message tracking began — earlier cohorts would read 0%
+  // purely because no messages exist from back then), how many posted within
+  // 7 days of joining. Rejoiners whose first post predates this join don't
+  // count — "posted within 7 days of joining" means after joining.
+  const activationMap = new Map<string, { joined: number; posted7d: number }>();
+  const twelveMonthsAgo = Date.now() - 366 * 86_400_000;
+  const trackingStartMonth = agg?.first ? agg.first.toISOString().slice(0, 7) : null;
+  for (const j of joiners) {
+    if (j.joinedAt.getTime() < twelveMonthsAgo) continue;
+    const key = localDay(j.joinedAt).slice(0, 7);
     if (trackingStartMonth === null || key < trackingStartMonth) continue;
     const slot = activationMap.get(key) ?? { joined: 0, posted7d: 0 };
     slot.joined++;
-    const first = firstPostAt.get(m.user.id);
+    const first = firstPostAt.get(j.userId);
     if (first) {
-      const diff = first.getTime() - joined.getTime();
+      const diff = first.getTime() - j.joinedAt.getTime();
       if (diff >= 0 && diff <= 7 * 86_400_000) slot.posted7d++;
     }
     activationMap.set(key, slot);
@@ -521,6 +555,7 @@ export async function computeServerStats(guildId: string): Promise<ServerStatsDa
     monthlyActive: monthly,
     memberSeries,
     joinLeave,
+    joinsPerMonth,
     activation,
     cohorts,
     concentration: {

@@ -151,6 +151,25 @@ model MessageEvent {
   @@index([guildId, authorId])
 }
 
+// One row per observed member join. Two sources: Discord's type-7 join system
+// messages recovered from the message archive (src/bot/join-backfill.ts —
+// covers #general through 2026-06 and #joins-leaves after, including people
+// who later left), and the live GuildMemberAdd gateway event going forward.
+// The id is the system message's snowflake for backfilled rows, a cuid for
+// live rows; the unique triple stops the two sources double-counting the same
+// join. Rejoins are separate rows (different joinedAt).
+model MemberJoinEvent {
+  id       String   @id @default(cuid())
+  guildId  String
+  userId   String
+  username String // username at join time
+  source   String // "system_message" | "gateway"
+  joinedAt DateTime
+
+  @@unique([guildId, userId, joinedAt])
+  @@index([guildId, joinedAt])
+}
+
 // One row per reaction added, mirroring MessageEvent's role for the stats
 // page: reaction volume over time, favorite emojis, most generous reactors.
 // Populated by the bot's MessageReactionAdd handler; removals are deliberately
@@ -463,6 +482,9 @@ model ArchiveChannelState {
   // When this channel's archived reactions were crawled into ReactionEvent
   // (one-time; see src/bot/reaction-backfill.ts). null = not yet done.
   reactionsBackfilledAt DateTime?
+  // When this channel's archived type-7 join messages were scanned into
+  // MemberJoinEvent (one-time; see src/bot/join-backfill.ts). null = not yet.
+  joinsBackfilledAt DateTime?
   updatedAt          DateTime @updatedAt
 
   @@unique([guildId, channelId])
