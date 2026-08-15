@@ -104,8 +104,8 @@ async function getAppToken(forceRefresh = false): Promise<string> {
   return cachedToken.token;
 }
 
-async function fetchViaOauth(subreddit: string): Promise<RedditPost[]> {
-  const url = `${OAUTH_BASE}/r/${encodeURIComponent(subreddit)}/new.json?limit=25&raw_json=1`;
+// Authenticated GET with a one-shot token refresh on 401, parsed as JSON.
+async function oauthJson<T>(url: string): Promise<T> {
   let res = await oauthGet(url, await getAppToken());
   if (res.status === 401) {
     // Token revoked/expired early — mint a fresh one and retry once.
@@ -114,9 +114,15 @@ async function fetchViaOauth(subreddit: string): Promise<RedditPost[]> {
   if (!res.ok) {
     throw new Error(`reddit ${url} ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
-  const listing = (await res.json()) as {
-    data?: { children?: Array<{ data?: RedditListingChild }> };
-  };
+  return (await res.json()) as T;
+}
+
+type RedditListing = { data?: { children?: Array<{ data?: RedditListingChild }> } };
+
+async function fetchViaOauth(subreddit: string): Promise<RedditPost[]> {
+  const listing = await oauthJson<RedditListing>(
+    `${OAUTH_BASE}/r/${encodeURIComponent(subreddit)}/new.json?limit=25&raw_json=1`
+  );
   const children = listing.data?.children ?? [];
   const posts: RedditPost[] = [];
   for (const c of children) {
@@ -146,13 +152,53 @@ function oauthGet(url: string, token: string): Promise<Response> {
   });
 }
 
+// Whether the OAuth reader is configured. Comment sinking requires it —
+// anonymous RSS can't sustain comment-volume polling from a server IP.
+export function redditOauthEnabled(): boolean {
+  return hasOauthCreds();
+}
+
+export type RedditComment = {
+  id: string; // base36 id, e.g. "m1abcd"
+  author: string;
+  body: string; // markdown source, as written
+  permalink: string; // full URL to the comment
+  postTitle: string; // title of the post the comment is on
+  createdAt: Date;
+};
+
+// Newest comments across the whole subreddit (all threads), newest-first.
+// OAuth-only — callers gate on redditOauthEnabled().
+export async function fetchNewComments(subreddit: string): Promise<RedditComment[]> {
+  const listing = await oauthJson<RedditListing>(
+    `${OAUTH_BASE}/r/${encodeURIComponent(subreddit)}/comments.json?limit=100&raw_json=1`
+  );
+  const children = listing.data?.children ?? [];
+  const out: RedditComment[] = [];
+  for (const c of children) {
+    const d = c.data;
+    if (!d?.id) continue;
+    out.push({
+      id: d.id,
+      author: d.author || "[deleted]",
+      body: (d.body ?? "").trim(),
+      permalink: d.permalink ? `${PUBLIC_BASE}${d.permalink}` : `${PUBLIC_BASE}/r/${subreddit}`,
+      postTitle: d.link_title ?? "",
+      createdAt: d.created_utc ? new Date(d.created_utc * 1000) : new Date(),
+    });
+  }
+  return out;
+}
+
 type RedditListingChild = {
   id?: string;
   title?: string;
   author?: string;
   permalink?: string; // site-relative, e.g. "/r/foo/comments/..."
   created_utc?: number; // seconds
-  selftext?: string;
+  selftext?: string; // posts
+  body?: string; // comments
+  link_title?: string; // comments: the parent post's title
 };
 
 // Minimal Atom parser for Reddit's RSS. Reddit emits stable, well-formed Atom,

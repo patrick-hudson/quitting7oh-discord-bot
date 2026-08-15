@@ -51,7 +51,7 @@ The restore page rebuilds missing roles/channels and re-applies member roles fro
 | Server stats | Activity, growth, retention, and reaction analytics. Section below. |
 | Settings | Timezone, admin role, Reddit announcer, departure posts, welcome DMs, archive toggle, config backup/restore. |
 
-The Reddit announcer watches up to 10 subreddits and posts each new submission into one channel as an embed. Per-subreddit high-water marks mean adding a subreddit never dumps its backlog, and one failed poll never blocks the others. It reads Reddit's public RSS by default and switches to OAuth when script-app credentials are set ([REDDIT.md](REDDIT.md)).
+The Reddit watcher runs two independent streams: announced subreddits post new submissions to a public channel, and firehose subreddits stream every comment into a private mod channel (batched embeds, titled by their post; requires the OAuth credentials). A subreddit can be on both lists — posts announce publicly while its comments firehose privately. Per-subreddit high-water marks mean adding a subreddit never dumps its backlog, and one failed poll never blocks the others. It reads Reddit's public RSS by default and switches to OAuth when script-app credentials are set ([REDDIT.md](REDDIT.md)).
 
 ## Background workers
 

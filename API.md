@@ -97,7 +97,7 @@ Discord native timestamps in each viewer's timezone.
 
 | Method | Path | Body / notes |
 | --- | --- | --- |
-| PATCH | `/guilds/{g}/settings` | `{timezone, adminRoleId, redditEnabled, redditSubreddits:[names], redditChannelId, leaveEnabled, leaveChannelId, welcomeDmEnabled, archiveEnabled}` — full replace; ⚠️ a wrong `adminRoleId` can lock admins out |
+| PATCH | `/guilds/{g}/settings` | `{timezone, adminRoleId, redditEnabled, redditSubreddits:[names], redditFirehoseSubreddits:[names], redditChannelId, redditFirehoseChannelId, leaveEnabled, leaveChannelId, welcomeDmEnabled, archiveEnabled}` — full replace; ⚠️ a wrong `adminRoleId` can lock admins out. Two independent Reddit streams: `redditSubreddits` announce new POSTS to `redditChannelId` (public); `redditFirehoseSubreddits` stream every COMMENT to `redditFirehoseChannelId` (mod-only; requires Reddit OAuth creds). A sub may be on both lists. Each non-empty list requires its channel. |
 | PATCH | `/guilds/{g}/defaults` | `{reminderTemplates:[…], leaveTemplates:[…], welcomeDmTemplates:[…]}` — each ≤20 entries × ≤2000 chars; empty array = baked-in defaults |
 | GET | `/guilds/{g}/config-export` | Full portable config JSON (settings + posts + milestones) |
 | POST | `/guilds/{g}/config-import` | ⚠️ `{config:<export blob>, sections:{settings,posts,milestones}}` — imported posts arrive inactive; `adminRoleId` is never imported |

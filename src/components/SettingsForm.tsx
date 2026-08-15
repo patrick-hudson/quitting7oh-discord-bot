@@ -28,7 +28,9 @@ export function SettingsForm({
     adminRoleId: string;
     redditEnabled: boolean;
     redditSubreddits: string[];
+    redditFirehoseSubreddits: string[];
     redditChannelId: string;
+    redditFirehoseChannelId: string;
     leaveEnabled: boolean;
     leaveChannelId: string;
     welcomeDmEnabled: boolean;
@@ -42,8 +44,13 @@ export function SettingsForm({
   const [adminRoleId, setAdminRoleId] = useState(initial.adminRoleId);
   const [redditEnabled, setRedditEnabled] = useState(initial.redditEnabled);
   const [redditSubreddits, setRedditSubreddits] = useState(initial.redditSubreddits);
-  const [subredditDraft, setSubredditDraft] = useState("");
+  const [firehoseSubreddits, setFirehoseSubreddits] = useState(
+    initial.redditFirehoseSubreddits
+  );
   const [redditChannelId, setRedditChannelId] = useState(initial.redditChannelId);
+  const [redditFirehoseChannelId, setRedditFirehoseChannelId] = useState(
+    initial.redditFirehoseChannelId
+  );
   const [leaveEnabled, setLeaveEnabled] = useState(initial.leaveEnabled);
   const [leaveChannelId, setLeaveChannelId] = useState(initial.leaveChannelId);
   const [welcomeDmEnabled, setWelcomeDmEnabled] = useState(initial.welcomeDmEnabled);
@@ -52,51 +59,11 @@ export function SettingsForm({
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Normalize one typed/pasted subreddit: trim, strip "r/" or a full URL
-  // prefix. Comma/space-separated pastes are split into several.
-  function parseSubreddits(raw: string): string[] {
-    return raw
-      .split(/[,\s]+/)
-      .map((s) =>
-        s
-          .trim()
-          .replace(/^https?:\/\/(www\.)?reddit\.com\//i, "")
-          .replace(/^\/?r\//i, "")
-          .replace(/\/.*$/, "")
-      )
-      .filter(Boolean);
-  }
-
-  function addSubreddits(raw: string) {
-    const parsed = parseSubreddits(raw);
-    if (parsed.length === 0) return;
-    setRedditSubreddits((prev) => {
-      const seen = new Set(prev.map((s) => s.toLowerCase()));
-      const next = [...prev];
-      for (const s of parsed) {
-        if (!seen.has(s.toLowerCase())) {
-          seen.add(s.toLowerCase());
-          next.push(s);
-        }
-      }
-      return next;
-    });
-    setSubredditDraft("");
-  }
-
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
     setError(null);
     setSaved(false);
-    // Anything still sitting in the draft box counts — nobody should lose a
-    // subreddit because they forgot to press Enter before Save.
-    const draft = parseSubreddits(subredditDraft);
-    const seen = new Set(redditSubreddits.map((s) => s.toLowerCase()));
-    const allSubreddits = [
-      ...redditSubreddits,
-      ...draft.filter((s) => !seen.has(s.toLowerCase())),
-    ];
     const res = await fetch(`/api/guilds/${guildId}/settings`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -104,8 +71,10 @@ export function SettingsForm({
         timezone,
         adminRoleId: adminRoleId || null,
         redditEnabled,
-        redditSubreddits: allSubreddits,
+        redditSubreddits,
+        redditFirehoseSubreddits: firehoseSubreddits,
         redditChannelId: redditChannelId || null,
+        redditFirehoseChannelId: redditFirehoseChannelId || null,
         leaveEnabled,
         leaveChannelId: leaveChannelId || null,
         welcomeDmEnabled,
@@ -119,8 +88,6 @@ export function SettingsForm({
       return;
     }
     setSaved(true);
-    setRedditSubreddits(allSubreddits);
-    setSubredditDraft("");
     router.refresh();
   }
 
@@ -176,8 +143,9 @@ export function SettingsForm({
             Reddit announcements
           </h2>
           <p className="mt-1 text-xs text-white/40">
-            Post an embed to a channel whenever a watched subreddit gets a new
-            submission. All watched subreddits announce into the same channel.
+            Two independent streams: announced subreddits post new submissions
+            to a public channel; firehose subreddits stream every comment to a
+            private mod channel. A subreddit can be on both lists.
           </p>
         </div>
 
@@ -190,60 +158,21 @@ export function SettingsForm({
           Announce new subreddit posts
         </label>
 
-        <div>
-          <label className="mb-1 block text-sm text-white/80">Subreddits</label>
-          {redditSubreddits.length > 0 && (
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {redditSubreddits.map((s) => (
-                <span
-                  key={s.toLowerCase()}
-                  className="inline-flex items-center gap-1 rounded-full bg-white/5 py-1 pl-2.5 pr-1 text-xs text-white/80 ring-1 ring-white/10"
-                >
-                  r/{s}
-                  <button
-                    type="button"
-                    aria-label={`Remove r/${s}`}
-                    onClick={() =>
-                      setRedditSubreddits((prev) => prev.filter((x) => x !== s))
-                    }
-                    className="rounded-full px-1 text-white/40 hover:bg-white/10 hover:text-white/90"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-white/40">r/</span>
-            <input
-              value={subredditDraft}
-              onChange={(e) => setSubredditDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addSubreddits(subredditDraft);
-                }
-              }}
-              onBlur={() => addSubreddits(subredditDraft)}
-              placeholder={redditSubreddits.length > 0 ? "add another…" : "quitting7oh"}
-              className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
-            />
-            <button
-              type="button"
-              onClick={() => addSubreddits(subredditDraft)}
-              disabled={!subredditDraft.trim()}
-              className="shrink-0 rounded-lg bg-white/5 px-3 py-2 text-sm text-white/70 ring-1 ring-white/10 hover:bg-white/10 disabled:opacity-40"
-            >
-              Add
-            </button>
-          </div>
-          <p className="mt-1 text-xs text-white/40">
-            Up to 10. Type a name (no <code className="text-white/60">r/</code>{" "}
-            needed) and press Enter — pasting a comma-separated list or full
-            reddit URLs works too.
-          </p>
-        </div>
+        <SubredditListEditor
+          label="Announced subreddits"
+          hint="New posts go to the announce channel, for members."
+          placeholder="quitting7oh"
+          list={redditSubreddits}
+          setList={setRedditSubreddits}
+        />
+
+        <SubredditListEditor
+          label="Firehose subreddits"
+          hint="Every comment streams to the firehose channel — for mod monitoring. Needs the Reddit OAuth credentials in the server env."
+          placeholder="kratom"
+          list={firehoseSubreddits}
+          setList={setFirehoseSubreddits}
+        />
 
         <div>
           <label className="mb-1 block text-sm text-white/80">Announce in channel</label>
@@ -261,6 +190,33 @@ export function SettingsForm({
               </option>
             ))}
           </select>
+          <p className="mt-1 text-xs text-white/40">
+            Public channel for announced subreddits&apos; new posts.
+          </p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm text-white/80">
+            Firehose channel
+          </label>
+          <select
+            value={redditFirehoseChannelId}
+            onChange={(e) => setRedditFirehoseChannelId(e.target.value)}
+            className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
+          >
+            <option value="" className="bg-neutral-900">
+              None
+            </option>
+            {channels.map((c) => (
+              <option key={c.id} value={c.id} className="bg-neutral-900">
+                #{c.name}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-white/40">
+            Private mod channel receiving every comment from the firehose
+            subreddits, batched as embeds titled by their post.
+          </p>
         </div>
       </div>
 
@@ -372,5 +328,105 @@ export function SettingsForm({
         {saving ? "Saving…" : "Save settings"}
       </button>
     </form>
+  );
+}
+
+// Chip-list editor for a subreddit set: type + Enter (or Add), paste
+// comma-separated lists or full reddit URLs, × to remove. Anything left in
+// the draft box is committed on blur, so a forgotten Enter can't lose a sub.
+function SubredditListEditor({
+  label,
+  hint,
+  placeholder,
+  list,
+  setList,
+}: {
+  label: string;
+  hint: string;
+  placeholder: string;
+  list: string[];
+  setList: React.Dispatch<React.SetStateAction<string[]>>;
+}) {
+  const [draft, setDraft] = useState("");
+
+  function parse(raw: string): string[] {
+    return raw
+      .split(/[,\s]+/)
+      .map((s) =>
+        s
+          .trim()
+          .replace(/^https?:\/\/(www\.)?reddit\.com\//i, "")
+          .replace(/^\/?r\//i, "")
+          .replace(/\/.*$/, "")
+      )
+      .filter(Boolean);
+  }
+
+  function add(raw: string) {
+    const parsed = parse(raw);
+    if (parsed.length === 0) return;
+    setList((prev) => {
+      const seen = new Set(prev.map((s) => s.toLowerCase()));
+      const next = [...prev];
+      for (const s of parsed) {
+        if (!seen.has(s.toLowerCase())) {
+          seen.add(s.toLowerCase());
+          next.push(s);
+        }
+      }
+      return next;
+    });
+    setDraft("");
+  }
+
+  return (
+    <div>
+      <label className="mb-1 block text-sm text-white/80">{label}</label>
+      {list.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {list.map((s) => (
+            <span
+              key={s.toLowerCase()}
+              className="inline-flex items-center gap-1 rounded-full bg-white/5 py-1 pl-2.5 pr-1 text-xs text-white/80 ring-1 ring-white/10"
+            >
+              r/{s}
+              <button
+                type="button"
+                aria-label={`Remove r/${s}`}
+                onClick={() => setList((prev) => prev.filter((x) => x !== s))}
+                className="rounded-full px-1 text-white/40 hover:bg-white/10 hover:text-white/90"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-white/40">r/</span>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add(draft);
+            }
+          }}
+          onBlur={() => add(draft)}
+          placeholder={list.length > 0 ? "add another…" : placeholder}
+          className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-2 focus:ring-[color:var(--color-brand-500)]"
+        />
+        <button
+          type="button"
+          onClick={() => add(draft)}
+          disabled={!draft.trim()}
+          className="shrink-0 rounded-lg bg-white/5 px-3 py-2 text-sm text-white/70 ring-1 ring-white/10 hover:bg-white/10 disabled:opacity-40"
+        >
+          Add
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-white/40">{hint}</p>
+    </div>
   );
 }

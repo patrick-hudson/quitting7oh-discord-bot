@@ -37,7 +37,9 @@ export default async function SettingsPage({
                 : guild.redditSubreddit
                   ? [guild.redditSubreddit]
                   : [],
+            redditFirehoseSubreddits: guild.redditFirehoseSubreddits,
             redditChannelId: guild.redditChannelId ?? "",
+            redditFirehoseChannelId: guild.redditFirehoseChannelId ?? "",
             leaveEnabled: guild.leaveEnabled,
             leaveChannelId: guild.leaveChannelId ?? "",
             welcomeDmEnabled: guild.welcomeDmEnabled,

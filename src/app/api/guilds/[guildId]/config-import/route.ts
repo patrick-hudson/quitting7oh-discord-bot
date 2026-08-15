@@ -25,8 +25,10 @@ const configSchema = z.object({
       // Current exports carry a list; older export files carry the single
       // redditSubreddit — accept both and merge on import.
       redditSubreddits: z.array(z.string().min(1).max(21)).max(10).optional(),
+      redditFirehoseSubreddits: z.array(z.string().min(1).max(21)).max(10).optional(),
       redditSubreddit: z.string().nullable().optional(),
       redditChannelId: snowflake.nullable(),
+      redditFirehoseChannelId: snowflake.nullable().optional(),
       leaveEnabled: z.boolean(),
       leaveChannelId: snowflake.nullable(),
       leaveTemplates: roster,
@@ -113,12 +115,14 @@ export const POST = withErrors(async (
         timezone: s.timezone,
         redditEnabled: s.redditEnabled,
         redditSubreddits: subreddits,
+        redditFirehoseSubreddits: s.redditFirehoseSubreddits ?? [],
         // Fresh marks: imported subs re-seed their baselines on the next poll
         // (announcing nothing) rather than replaying against stale marks.
         redditLastPostAts: {},
         redditSubreddit: null,
         redditLastPostAt: null,
         redditChannelId: s.redditChannelId,
+        redditFirehoseChannelId: s.redditFirehoseChannelId ?? null,
         leaveEnabled: s.leaveEnabled,
         leaveChannelId: s.leaveChannelId,
         leaveTemplates: s.leaveTemplates,

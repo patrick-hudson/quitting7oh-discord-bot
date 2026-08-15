@@ -21,12 +21,18 @@ model Guild {
   // null = only BOOTSTRAP_ADMIN_USER_IDS can manage this guild.
   adminRoleId String?
 
-  // Reddit new-post announcements. One or more watched subreddits, all posting
-  // into one channel: when redditEnabled is true, the bot polls each
-  // /r/<sub>/new and posts new submissions to redditChannelId as embeds.
-  redditEnabled    Boolean  @default(false)
-  redditSubreddits String[] @default([]) // names without the "r/" prefix
-  redditChannelId  String? // Discord channel snowflake to announce into
+  // Reddit watching, two independent streams (a sub may be on both lists):
+  //   - Announce: new POSTS from redditSubreddits → redditChannelId (public).
+  //   - Firehose: every COMMENT from redditFirehoseSubreddits →
+  //     redditFirehoseChannelId (private, mod-only). Requires the OAuth
+  //     reader (REDDIT_CLIENT_ID/SECRET) — anonymous RSS can't sustain
+  //     comment-volume polling.
+  // Names are stored without the "r/" prefix.
+  redditEnabled            Boolean  @default(false)
+  redditSubreddits         String[] @default([])
+  redditFirehoseSubreddits String[] @default([])
+  redditChannelId          String? // public announce channel
+  redditFirehoseChannelId  String? // private comment-firehose channel
   // Per-subreddit high-water marks: JSON map of lowercased subreddit name →
   // ISO timestamp of the newest submission already announced. Only items
   // strictly newer are posted. A subreddit with no entry gets its baseline

@@ -41,7 +41,9 @@ export const GET = withErrors(async (
           : guild.redditSubreddit
             ? [guild.redditSubreddit]
             : [],
+      redditFirehoseSubreddits: guild.redditFirehoseSubreddits,
       redditChannelId: guild.redditChannelId,
+      redditFirehoseChannelId: guild.redditFirehoseChannelId,
       leaveEnabled: guild.leaveEnabled,
       leaveChannelId: guild.leaveChannelId,
       leaveTemplates: guild.leaveTemplates,
