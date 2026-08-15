@@ -33,6 +33,12 @@ model Guild {
   redditFirehoseSubreddits String[] @default([])
   redditChannelId          String? // public announce channel
   redditFirehoseChannelId  String? // private comment-firehose channel
+  // Leaderboard monitoring: subs whose posts + comments are PERSISTED to
+  // RedditPost/RedditComment for the Reddit contributor leaderboard (and,
+  // later, Reddit-side AI reviews). Independent of announce/firehose — but
+  // the poller shares fetches, so a sub that's already streamed costs no
+  // extra API calls to also collect. Comments need the OAuth reader.
+  redditLeaderboardSubreddits String[] @default([])
   // Per-subreddit high-water marks: JSON map of lowercased subreddit name →
   // ISO timestamp of the newest submission already announced. Only items
   // strictly newer are posted. A subreddit with no entry gets its baseline
@@ -81,6 +87,9 @@ model Guild {
   // is editable (persona + criteria + guardrails), so keep the guardrails when
   // editing. See src/bot/ai-review-worker.ts.
   aiReviewPrompt String? @db.Text
+  // Same, for platform=reddit reviews (mod-promotion rubric). null = the
+  // baked-in DEFAULT_REDDIT_MOD_PROMPT in src/lib/ai-review.ts.
+  aiRedditReviewPrompt String? @db.Text
 
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -567,6 +576,11 @@ model AiReviewJob {
   // finishes instead of one per job. null = ad-hoc single review.
   batchId String?
 
+  // Which platform's history is reviewed: "discord" (targetUserId = Discord
+  // snowflake, contributor-fit rubric) or "reddit" (targetUserId = reddit
+  // username, mod-promotion rubric, gathered from RedditPost/RedditComment).
+  platform String @default("discord")
+
   // Who is being reviewed and the (optional) slice of history considered.
   targetUserId String
   targetName   String? // resolved display name at review time, for the list UI
@@ -609,6 +623,81 @@ model AiReviewJob {
   @@index([guildId, createdAt])
   @@index([guildId, targetUserId, createdAt])
   @@index([guildId, batchId])
+}
+
+// Collected Reddit submissions from leaderboard-monitored subreddits, written
+// by the reddit poller (shared fetches with announce/firehose). Reddit ids are
+// natural keys, so re-seeing content is a skipped duplicate; `score` is the
+// value at first sight and is re-read once content matures (see
+// refreshMaturingScores in src/lib/reddit-store.ts) so karma rankings reflect
+// settled votes, not the zero every post starts with.
+model RedditPost {
+  id             String    @id // t3 base36 id
+  guildId        String
+  subreddit      String // lowercased
+  author         String
+  title          String    @db.Text
+  body           String    @db.Text // selftext; "" for link/image posts
+  permalink      String
+  score          Int       @default(0)
+  scoreUpdatedAt DateTime? // null until the maturation pass re-reads it
+  createdAt      DateTime
+
+  @@index([guildId, subreddit, createdAt])
+  @@index([guildId, author])
+}
+
+// Collected Reddit comments, same lifecycle as RedditPost.
+model RedditComment {
+  id             String    @id // t1 base36 id
+  guildId        String
+  subreddit      String // lowercased
+  author         String
+  body           String    @db.Text
+  permalink      String
+  postTitle      String
+  score          Int       @default(0)
+  scoreUpdatedAt DateTime?
+  createdAt      DateTime
+
+  @@index([guildId, subreddit, createdAt])
+  @@index([guildId, author])
+}
+
+// Resumable cursor for the one-time Arctic Shift historical backfill of a
+// leaderboard-monitored subreddit (src/bot/reddit-backfill.ts). Arctic Shift
+// archives Reddit from 2005 on and is queried oldest-first; cursors advance
+// per page so a restart never re-crawls. Backfilled rows carry settled scores
+// (scoreUpdatedAt set), so the maturation pass skips them.
+model RedditBackfillState {
+  id              String    @id @default(cuid())
+  guildId         String
+  subreddit       String // lowercased
+  postsCursor     DateTime? // created_utc of the newest backfilled post
+  commentsCursor  DateTime?
+  postsDoneAt     DateTime?
+  commentsDoneAt  DateTime?
+  postsFetched    Int       @default(0)
+  commentsFetched Int       @default(0)
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([guildId, subreddit])
+}
+
+// Manual mapping between a reddit contributor and a Discord member, set by a
+// mod on the Reddit leaderboard page. Used by platform=reddit AI reviews to
+// pull the linked member's Discord history in as additional evidence. Never
+// inferred automatically — a wrong link would attribute someone else's words.
+model RedditIdentityLink {
+  id             String   @id @default(cuid())
+  guildId        String
+  redditUsername String // lowercased
+  discordUserId  String
+  createdBy      String // Discord id of the mod who linked
+  createdAt      DateTime @default(now())
+
+  @@unique([guildId, redditUsername])
+  @@index([guildId, discordUserId])
 }
 
 // Personal bearer tokens for the HTTP API (see API.md). A token acts AS its

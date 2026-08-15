@@ -28,6 +28,7 @@ import { runAiReviewWorker } from "./ai-review-worker";
 import { runStatsWorker } from "./stats-worker";
 import { runReactionBackfill } from "./reaction-backfill";
 import { runJoinBackfill } from "./join-backfill";
+import { runRedditBackfill } from "./reddit-backfill";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -181,6 +182,7 @@ async function main() {
     runStatsWorker();
     runReactionBackfill();
     runJoinBackfill();
+    runRedditBackfill();
   });
 
   client.on(Events.GuildCreate, async (g) => {

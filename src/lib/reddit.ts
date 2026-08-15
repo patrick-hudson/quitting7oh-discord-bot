@@ -40,6 +40,9 @@ export type RedditPost = {
   // Plain-text selftext body, extracted from the feed's <content>. Empty for
   // link/image posts (which carry no body in the feed).
   body: string;
+  // Score at fetch time. 0 from the RSS path (feeds carry no score) and for
+  // fresh content generally — see refreshMaturingScores for settled values.
+  score: number;
 };
 
 // Fetch the newest submissions for a subreddit, newest-first (feed order).
@@ -137,6 +140,7 @@ async function fetchViaOauth(subreddit: string): Promise<RedditPost[]> {
       // selftext is markdown; fine as-is for a short embed snippet. Empty for
       // link/image posts, matching the RSS path's behavior.
       body: (d.selftext ?? "").trim(),
+      score: d.score ?? 0,
     });
   }
   return posts;
@@ -165,6 +169,7 @@ export type RedditComment = {
   permalink: string; // full URL to the comment
   postTitle: string; // title of the post the comment is on
   createdAt: Date;
+  score: number; // at fetch time; see refreshMaturingScores
 };
 
 // Newest comments across the whole subreddit (all threads), newest-first.
@@ -185,6 +190,7 @@ export async function fetchNewComments(subreddit: string): Promise<RedditComment
       permalink: d.permalink ? `${PUBLIC_BASE}${d.permalink}` : `${PUBLIC_BASE}/r/${subreddit}`,
       postTitle: d.link_title ?? "",
       createdAt: d.created_utc ? new Date(d.created_utc * 1000) : new Date(),
+      score: d.score ?? 0,
     });
   }
   return out;
@@ -196,10 +202,30 @@ type RedditListingChild = {
   author?: string;
   permalink?: string; // site-relative, e.g. "/r/foo/comments/..."
   created_utc?: number; // seconds
+  score?: number;
   selftext?: string; // posts
   body?: string; // comments
   link_title?: string; // comments: the parent post's title
 };
+
+// Current scores for up to 100 things per call (t3_/t1_ fullnames) via
+// /api/info — the cheap way to re-read settled karma after votes accumulate.
+// OAuth-only; callers gate on redditOauthEnabled().
+export async function fetchInfoScores(
+  fullnames: string[]
+): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  for (let i = 0; i < fullnames.length; i += 100) {
+    const batch = fullnames.slice(i, i + 100);
+    const listing = await oauthJson<{
+      data?: { children?: Array<{ data?: { name?: string; score?: number } }> };
+    }>(`${OAUTH_BASE}/api/info.json?id=${batch.join(",")}&raw_json=1`);
+    for (const c of listing.data?.children ?? []) {
+      if (c.data?.name) out.set(c.data.name, c.data.score ?? 0);
+    }
+  }
+  return out;
+}
 
 // Minimal Atom parser for Reddit's RSS. Reddit emits stable, well-formed Atom,
 // so a targeted per-<entry> extraction is enough — we avoid an XML dependency.
@@ -227,6 +253,7 @@ export function parseAtomFeed(xml: string): RedditPost[] {
       permalink: href,
       createdAt: Number.isNaN(ts.getTime()) ? new Date() : ts,
       body: extractBody(content),
+      score: 0,
     });
   }
   return posts;

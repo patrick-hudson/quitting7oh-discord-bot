@@ -1,4 +1,4 @@
-// Reddit watcher with two independent streams per guild:
+// Reddit watcher with three independent features per guild, sharing fetches:
 //
 //   - ANNOUNCE: new posts from redditSubreddits → redditChannelId, as embeds
 //     with a short excerpt. Member-facing.
@@ -7,7 +7,12 @@
 //     titled with its post for context. Mod-only monitoring. Requires the
 //     OAuth reader (comment-volume polling would be 429'd anonymously).
 //
-// A subreddit on both lists announces its posts AND firehoses its comments.
+//   - COLLECT: posts + comments from redditLeaderboardSubreddits persisted to
+//     RedditPost/RedditComment (src/lib/reddit-store.ts) for the Reddit
+//     contributor leaderboard. Independent of redditEnabled; a sub that's
+//     already announced/firehosed is collected from the same fetch.
+//
+// A subreddit on several lists is fetched once per content kind per tick.
 // High-water marks live in Guild.redditLastPostAts, a JSON map: post marks
 // keyed by lowercased sub name, comment marks by "c:<sub>". Each seeds
 // silently on first sight (no backlog dump) and advances independently, so
@@ -29,6 +34,7 @@ import {
   type RedditPost,
 } from "@/lib/reddit";
 import { audit } from "@/lib/audit";
+import { persistComments, persistPosts, refreshMaturingScores } from "@/lib/reddit-store";
 
 const REDDIT_ORANGE = 0xff4500;
 const COMMENT_GREY = 0x8a919b;
@@ -54,16 +60,15 @@ export function runRedditPoller(client: Client) {
 async function tick(client: Client) {
   const guilds = await prisma.guild.findMany({
     where: {
-      redditEnabled: true,
       OR: [
         { redditSubreddits: { isEmpty: false } },
         { redditFirehoseSubreddits: { isEmpty: false } },
+        { redditLeaderboardSubreddits: { isEmpty: false } },
         // Legacy single-sub config still waiting to be migrated.
         { redditSubreddit: { not: null } },
       ],
     },
   });
-  if (guilds.length === 0) return;
 
   for (const guild of guilds) {
     const g = await migrateLegacyConfig(guild);
@@ -76,61 +81,96 @@ async function tick(client: Client) {
       if (fetches++ > 0) await sleep(2_000);
     };
 
-    // --- Announce stream: posts from redditSubreddits -----------------------
-    if (g.redditChannelId) {
-      for (const subreddit of g.redditSubreddits) {
-        const key = subreddit.toLowerCase();
+    // Three features, one fetch plan. A sub can be announced (posts → public
+    // channel), firehosed (comments → mod channel), and/or monitored
+    // (posts + comments persisted for the leaderboard) — each fetch happens
+    // once and feeds every feature that wants it. Announce/firehose respect
+    // the redditEnabled toggle; collection is independent of it.
+    const announced = new Set(g.redditSubreddits.map((x) => x.toLowerCase()));
+    const firehosed = new Set(g.redditFirehoseSubreddits.map((x) => x.toLowerCase()));
+    const monitored = new Set(
+      g.redditLeaderboardSubreddits.map((x) => x.toLowerCase())
+    );
+    const union = new Map<string, string>(); // key → display casing
+    for (const list of [
+      g.redditSubreddits,
+      g.redditFirehoseSubreddits,
+      g.redditLeaderboardSubreddits,
+    ]) {
+      for (const sub of list) {
+        if (!union.has(sub.toLowerCase())) union.set(sub.toLowerCase(), sub);
+      }
+    }
+
+    for (const [key, subreddit] of union) {
+      const doAnnounce =
+        g.redditEnabled && announced.has(key) && Boolean(g.redditChannelId);
+      const doFirehose =
+        g.redditEnabled &&
+        firehosed.has(key) &&
+        Boolean(g.redditFirehoseChannelId) &&
+        redditOauthEnabled();
+      const doCollect = monitored.has(key);
+
+      // --- Posts: fetched once for announce and/or collection --------------
+      if (doAnnounce || doCollect) {
         try {
           await pace();
           const posts = await fetchNewPosts(subreddit);
-          if (posts.length === 0) continue;
 
-          const newest = posts.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
-          const mark = marks[key] ? new Date(marks[key]) : null;
-
-          // First sight: seed the baseline without announcing.
-          if (mark === null) {
-            marks[key] = newest.createdAt.toISOString();
-            marksChanged = true;
-            console.log(`[reddit] seeded baseline for r/${subreddit} (${g.name})`);
-            audit(g.id, "reddit.baseline_seeded", `Seeded r/${subreddit} baseline — no backlog announced`, {
-              subreddit,
-              baselineAt: newest.createdAt.toISOString(),
-            });
-            continue;
-          }
-
-          const fresh = posts
-            .filter((p) => p.createdAt > mark)
-            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-          if (fresh.length === 0) continue;
-
-          for (const post of fresh) {
-            await announce(client, g.redditChannelId, subreddit, post);
-          }
-
-          // Advance past everything seen this tick even if a send failed —
-          // retrying a Discord failure risks double-posting the successes.
-          marks[key] = newest.createdAt.toISOString();
-          marksChanged = true;
-          console.log(
-            `[reddit] announced ${fresh.length} new post(s) from r/${subreddit} (${g.name})`
-          );
-          audit(
-            g.id,
-            "reddit.announced",
-            `Announced ${fresh.length} new r/${subreddit} post(s)`,
-            {
-              subreddit,
-              channelId: g.redditChannelId,
-              posts: fresh.map((p) => ({
-                id: p.id,
-                title: p.title.slice(0, 200),
-                author: p.author,
-                permalink: p.permalink,
-              })),
+          if (doCollect) {
+            const stored = await persistPosts(g.id, key, posts);
+            if (stored > 0) {
+              console.log(`[reddit] collected ${stored} post(s) from r/${subreddit} (${g.name})`);
             }
-          );
+          }
+
+          if (doAnnounce && posts.length > 0) {
+            const newest = posts.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
+            const mark = marks[key] ? new Date(marks[key]) : null;
+
+            if (mark === null) {
+              // First sight: seed the baseline without announcing.
+              marks[key] = newest.createdAt.toISOString();
+              marksChanged = true;
+              console.log(`[reddit] seeded baseline for r/${subreddit} (${g.name})`);
+              audit(g.id, "reddit.baseline_seeded", `Seeded r/${subreddit} baseline — no backlog announced`, {
+                subreddit,
+                baselineAt: newest.createdAt.toISOString(),
+              });
+            } else {
+              const fresh = posts
+                .filter((p) => p.createdAt > mark)
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+              if (fresh.length > 0) {
+                for (const post of fresh) {
+                  await announce(client, g.redditChannelId!, subreddit, post);
+                }
+                // Advance past everything seen this tick even if a send failed —
+                // retrying a Discord failure risks double-posting the successes.
+                marks[key] = newest.createdAt.toISOString();
+                marksChanged = true;
+                console.log(
+                  `[reddit] announced ${fresh.length} new post(s) from r/${subreddit} (${g.name})`
+                );
+                audit(
+                  g.id,
+                  "reddit.announced",
+                  `Announced ${fresh.length} new r/${subreddit} post(s)`,
+                  {
+                    subreddit,
+                    channelId: g.redditChannelId,
+                    posts: fresh.map((p) => ({
+                      id: p.id,
+                      title: p.title.slice(0, 200),
+                      author: p.author,
+                      permalink: p.permalink,
+                    })),
+                  }
+                );
+              }
+            }
+          }
         } catch (err) {
           console.error(`[reddit] post poll failed for r/${subreddit} (${g.name}):`, err);
           audit(
@@ -143,58 +183,67 @@ async function tick(client: Client) {
           // Mark untouched; next tick retries from where we were.
         }
       }
-    }
 
-    // --- Firehose stream: comments from redditFirehoseSubreddits ------------
-    if (g.redditFirehoseChannelId && redditOauthEnabled()) {
-      for (const subreddit of g.redditFirehoseSubreddits) {
-        const cKey = `c:${subreddit.toLowerCase()}`;
+      // --- Comments: fetched once for firehose and/or collection -----------
+      // Both need the OAuth reader (anonymous RSS can't sustain comment volume).
+      if (doFirehose || (doCollect && redditOauthEnabled())) {
+        const cKey = `c:${key}`;
         try {
           await pace();
           const comments = await fetchNewComments(subreddit);
-          if (comments.length === 0) continue;
 
-          const newest = comments.reduce((a, b) =>
-            a.createdAt > b.createdAt ? a : b
-          );
-          const mark = marks[cKey] ? new Date(marks[cKey]) : null;
-
-          if (mark === null) {
-            marks[cKey] = newest.createdAt.toISOString();
-            marksChanged = true;
-            console.log(`[reddit] seeded firehose baseline for r/${subreddit} (${g.name})`);
-            continue;
+          if (doCollect) {
+            const stored = await persistComments(g.id, key, comments);
+            if (stored > 0) {
+              console.log(`[reddit] collected ${stored} comment(s) from r/${subreddit} (${g.name})`);
+            }
           }
 
-          const fresh = comments
-            .filter((c) => c.createdAt > mark)
-            .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
-          if (fresh.length === 0) continue;
+          if (doFirehose && comments.length > 0) {
+            const newest = comments.reduce((a, b) =>
+              a.createdAt > b.createdAt ? a : b
+            );
+            const mark = marks[cKey] ? new Date(marks[cKey]) : null;
 
-          await firehose(client, g.redditFirehoseChannelId, subreddit, fresh);
-          marks[cKey] = newest.createdAt.toISOString();
-          marksChanged = true;
-          console.log(
-            `[reddit] firehosed ${fresh.length} new comment(s) from r/${subreddit} (${g.name})`
-          );
-          audit(
-            g.id,
-            "reddit.firehosed",
-            `Firehosed ${fresh.length} new r/${subreddit} comment(s)`,
-            { subreddit, channelId: g.redditFirehoseChannelId, count: fresh.length }
-          );
+            if (mark === null) {
+              marks[cKey] = newest.createdAt.toISOString();
+              marksChanged = true;
+              console.log(`[reddit] seeded firehose baseline for r/${subreddit} (${g.name})`);
+            } else {
+              const fresh = comments
+                .filter((c) => c.createdAt > mark)
+                .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+              if (fresh.length > 0) {
+                await firehose(client, g.redditFirehoseChannelId!, subreddit, fresh);
+                marks[cKey] = newest.createdAt.toISOString();
+                marksChanged = true;
+                console.log(
+                  `[reddit] firehosed ${fresh.length} new comment(s) from r/${subreddit} (${g.name})`
+                );
+                audit(
+                  g.id,
+                  "reddit.firehosed",
+                  `Firehosed ${fresh.length} new r/${subreddit} comment(s)`,
+                  { subreddit, channelId: g.redditFirehoseChannelId, count: fresh.length }
+                );
+              }
+            }
+          }
         } catch (err) {
-          console.error(`[reddit] firehose failed for r/${subreddit} (${g.name}):`, err);
+          console.error(`[reddit] comment poll failed for r/${subreddit} (${g.name}):`, err);
           audit(
             g.id,
             "reddit.poll_failed",
-            `Comment firehose of r/${subreddit} failed — will retry next tick`,
+            `Comment poll of r/${subreddit} failed — will retry next tick`,
             { subreddit, stream: "comments", error: (err as Error).message?.slice(0, 500) },
             "error"
           );
         }
       }
-    } else if (
+    }
+
+    if (
+      g.redditEnabled &&
       g.redditFirehoseChannelId &&
       g.redditFirehoseSubreddits.length > 0 &&
       !redditOauthEnabled()
@@ -209,6 +258,17 @@ async function tick(client: Client) {
         where: { id: g.id },
         data: { redditLastPostAts: marks as Prisma.InputJsonValue },
       });
+    }
+  }
+
+  // Settle karma for collected content old enough for votes to accumulate —
+  // at most two /api/info calls per tick (100 items each).
+  if (redditOauthEnabled()) {
+    try {
+      const updated = await refreshMaturingScores();
+      if (updated > 0) console.log(`[reddit] matured scores for ${updated} item(s)`);
+    } catch (err) {
+      console.error("[reddit] score maturation failed:", err);
     }
   }
 }

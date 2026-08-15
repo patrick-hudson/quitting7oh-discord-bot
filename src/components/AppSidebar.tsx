@@ -12,6 +12,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Award,
   CalendarClock,
+  Flame,
   ChartColumn,
   ChevronsUpDown,
   Download,
@@ -95,6 +96,7 @@ export function AppSidebar({
       label: "Members",
       items: [
         { href: `${base}/leaderboard`, label: "Leaderboard", icon: Trophy },
+        { href: `${base}/reddit-leaderboard`, label: "Reddit leaderboard", icon: Flame },
         { href: `${base}/milestones`, label: "Milestones", icon: Award },
         { href: `${base}/milestones/advanced`, label: "Bulk-edit templates", icon: Layers },
         { href: `${base}/ai-review`, label: "AI reviews", icon: Sparkles },
