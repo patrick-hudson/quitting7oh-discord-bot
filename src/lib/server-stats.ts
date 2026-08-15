@@ -106,6 +106,58 @@ export type ServerStatsData = {
   generatedAt: string;
 };
 
+// Fill defaults for any section a cached blob doesn't have. The cache and the
+// code deploy independently: right after a release that adds a section, the
+// stored blob was built by the PREVIOUS compute and lacks the new fields until
+// the worker's next rebuild — the renderer must not crash in that window.
+// Returns null when the blob isn't a stats payload at all (empty `{}` default).
+export function normalizeServerStats(raw: unknown): ServerStatsData | null {
+  const d = raw as Partial<ServerStatsData> | null;
+  if (!d || typeof d !== "object" || !d.tiles) return null;
+  return {
+    version: 1,
+    timezone: d.timezone ?? "UTC",
+    tiles: d.tiles,
+    messagesPerDay: d.messagesPerDay ?? [],
+    heatmap: d.heatmap ?? Array.from({ length: 7 }, () => Array(24).fill(0)),
+    channels: d.channels ?? [],
+    weeklyActive: d.weeklyActive ?? [],
+    monthlyActive: d.monthlyActive ?? [],
+    memberSeries: d.memberSeries ?? [],
+    joinLeave: d.joinLeave ?? [],
+    joinsPerMonth: d.joinsPerMonth ?? [],
+    activation: d.activation ?? [],
+    cohorts: d.cohorts ?? { months: [], rows: [] },
+    concentration:
+      d.concentration ?? {
+        totalAuthors: 0,
+        top10Share: 0,
+        medianPerAuthor: 0,
+        buckets: [],
+      },
+    records:
+      d.records ?? {
+        busiestDay: null,
+        busiestHour: null,
+        longestStreakDays: 0,
+        currentStreakDays: 0,
+      },
+    recovery:
+      d.recovery ?? { tiers: [], tierSeries: [], claimsPerMonth: [], tenureBuckets: [] },
+    reactions:
+      d.reactions ?? {
+        trackingSince: null,
+        total30d: 0,
+        perMessage30d: null,
+        perDay: [],
+        topEmojis: [],
+        topReactors: [],
+      },
+    moderation: d.moderation ?? [],
+    generatedAt: d.generatedAt ?? "",
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Compute
 // ---------------------------------------------------------------------------

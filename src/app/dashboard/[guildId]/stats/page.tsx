@@ -8,7 +8,7 @@ import { requireGuildAccess } from "@/lib/authz";
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { StatsDashboard } from "@/components/stats/StatsDashboard";
 import { StatsRefresh } from "@/components/stats/StatsRefresh";
-import type { ServerStatsData } from "@/lib/server-stats";
+import { normalizeServerStats } from "@/lib/server-stats";
 
 export default async function StatsPage({
   params,
@@ -18,11 +18,12 @@ export default async function StatsPage({
   const { guildId } = await params;
   await requireGuildAccess(guildId);
 
+  // normalizeServerStats fills defaults for sections the cached blob predates
+  // (cache and code deploy independently) and returns null for a blob that
+  // isn't a stats payload at all — both fall back to the "building" state.
   const cache = await prisma.statsCache.findUnique({ where: { guildId } });
   const data =
-    cache?.generatedAt != null
-      ? (cache.data as unknown as ServerStatsData)
-      : null;
+    cache?.generatedAt != null ? normalizeServerStats(cache.data) : null;
 
   return (
     <div className="mx-auto max-w-7xl">
