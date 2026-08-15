@@ -12,11 +12,14 @@ export function AiReviewPromptEditor({
   initial,
   isCustom,
   defaultPrompt,
+  variant = "discord",
 }: {
   guildId: string;
   initial: string; // current effective prompt (override or default)
   isCustom: boolean;
   defaultPrompt: string;
+  // "discord" = contributor-fit rubric; "reddit" = mod-promotion rubric.
+  variant?: "discord" | "reddit";
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -31,7 +34,7 @@ export function AiReviewPromptEditor({
       const res = await fetch(`/api/guilds/${guildId}/ai-review/prompt`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: next }),
+        body: JSON.stringify({ prompt: next, variant }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         ok?: boolean;
@@ -56,7 +59,7 @@ export function AiReviewPromptEditor({
         className="flex w-full items-center justify-between px-4 py-3 text-left"
       >
         <span className="text-sm font-medium text-white/80">
-          Reviewer prompt{" "}
+          {variant === "reddit" ? "Reddit mod-review prompt" : "Reviewer prompt"}{" "}
           <span
             className={`ml-2 rounded px-1.5 py-0.5 text-[10px] ${
               isCustom

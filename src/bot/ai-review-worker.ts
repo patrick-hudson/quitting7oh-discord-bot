@@ -16,6 +16,7 @@ import { audit } from "@/lib/audit";
 import { getGuildMember, getUser } from "@/lib/discord-rest";
 import {
   generateReview,
+  resolveRedditReviewPrompt,
   resolveReviewPrompt,
   NoApiKeyError,
   NoMessagesError,
@@ -91,8 +92,9 @@ async function processJob(client: Client, job: AiReviewJob): Promise<boolean> {
 
   // Batch jobs can sit queued for hours — re-check membership at run time so
   // we don't spend a review on someone who left after being selected. 404 =
-  // gone; any other error fails open (run the review).
-  if (job.batchId) {
+  // gone; any other error fails open (run the review). Reddit reviews have no
+  // membership to check.
+  if (job.batchId && job.platform !== "reddit") {
     let member: unknown = undefined;
     try {
       member = await getGuildMember(job.guildId, job.targetUserId);
@@ -116,12 +118,30 @@ async function processJob(client: Client, job: AiReviewJob): Promise<boolean> {
 
   try {
     const guild = await prisma.guild.findUnique({ where: { id: job.guildId } });
-    const systemPrompt = resolveReviewPrompt(guild?.aiReviewPrompt);
-    const stats = await loadStats(job.guildId, job.targetUserId);
-    const targetName = await resolveName(job, stats);
+    const isReddit = job.platform === "reddit";
+    const systemPrompt = isReddit
+      ? resolveRedditReviewPrompt(guild?.aiRedditReviewPrompt)
+      : resolveReviewPrompt(guild?.aiReviewPrompt);
+    const stats = isReddit ? null : await loadStats(job.guildId, job.targetUserId);
+    const targetName = isReddit
+      ? (job.targetName ?? `u/${job.targetUserId}`)
+      : await resolveName(job, stats);
+    // Mod-confirmed identity link: lets a reddit review weigh the same
+    // person's Discord history as additional evidence.
+    const link = isReddit
+      ? await prisma.redditIdentityLink.findUnique({
+          where: {
+            guildId_redditUsername: {
+              guildId: job.guildId,
+              redditUsername: job.targetUserId.toLowerCase(),
+            },
+          },
+        })
+      : null;
 
     const result = await generateReview({
       guildId: job.guildId,
+      platform: isReddit ? "reddit" : "discord",
       targetUserId: job.targetUserId,
       targetName,
       sinceAt: job.sinceAt,
@@ -130,6 +150,7 @@ async function processJob(client: Client, job: AiReviewJob): Promise<boolean> {
       systemPrompt,
       archiveEnabled: Boolean(guild?.archiveEnabled),
       stats: stats?.stats ?? null,
+      linkedDiscordUserId: link?.discordUserId ?? null,
     });
 
     await prisma.aiReviewJob.update({

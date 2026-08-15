@@ -132,6 +132,15 @@ These write roles and messages in the live server.
 | POST | `/guilds/{g}/stats/refresh` | *job* — request recompute (worker rebuilds within ~1 min) |
 | GET | `/guilds/{g}/stats/refresh` | `{generatedAt, computing, refreshRequested}` |
 
+## Reddit leaderboard
+
+| Method | Path | Body / notes |
+| --- | --- | --- |
+| GET | `/guilds/{g}/reddit-leaderboard?subreddit=` | `{monitored, rows:[{author, posts, comments, total, karma, avgScore, activeDays, firstSeen, lastSeen}], subreddits, totalPosts, totalComments, collectingSince}` — top 250 by activity; karma uses settled scores |
+| PATCH | `/guilds/{g}/reddit-leaderboard` | `{subreddits:[names]}` (≤10) — which subs are collected. Live collection piggybacks on announce/firehose fetches; the Arctic Shift backfill pulls full history automatically. |
+| PUT | `/guilds/{g}/reddit-leaderboard/link` | `{redditUsername, discordUserId}` — mod-confirmed identity link; reddit AI reviews then include the member's Discord history |
+| DELETE | `/guilds/{g}/reddit-leaderboard/link?redditUsername=` | Remove a link |
+
 ## AI reviews 💸
 
 Every review is a real Claude API call (roughly $0.03–$0.75 per member
@@ -139,14 +148,14 @@ depending on history size). Batches multiply that — always dry-run first.
 
 | Method | Path | Body / notes |
 | --- | --- | --- |
-| POST | `/guilds/{g}/ai-review` | *job* 💸 `{targetUserId, targetName?, sinceAt?, untilAt?, channelIds:[]}` → `{job:{id,status}}`. 409 if an ad-hoc review is already in flight. |
+| POST | `/guilds/{g}/ai-review` | *job* 💸 `{platform?: "discord"\|"reddit", targetUserId, targetName?, sinceAt?, untilAt?, channelIds:[]}` → `{job:{id,status}}`. `platform:"discord"` (default) reviews a member's server history with the contributor-fit rubric; `platform:"reddit"` takes a reddit username and reviews their collected subreddit history with the mod-promotion rubric (plus linked Discord history when an identity link exists). 409 if an ad-hoc review is already in flight. |
 | GET | `/guilds/{g}/ai-review` | Job list, summary fields. Filters: `?status=`, `?targetUserId=`, `?batchId=`, `?archived=true\|false`, `?limit=` (≤500) |
 | GET | `/guilds/{g}/ai-review/report` | Fit report: every reviewed member's latest completed verdict — `{members:[{targetUserId, targetName, recommendation, confidence, crisisFlag, finishedAt, reviewCount, id}]}` |
 | GET | `/guilds/{g}/ai-review/{jobId}` | Full job incl. `verdict` (`recommendation, confidence, summary, strengths[], concerns[], crisisFlag, crisisNote?, outreachMessage`), token spend, model |
 | POST | `/guilds/{g}/ai-review/batch` | 💸 `{activeWithinDays=60, minMessages=10, skipReviewedWithinDays?, excludeRoleIds:[], dryRun}` → `{batchId?, counts:{matchedActivity, departed, excludedByRole, alreadyReviewed, overCap, toQueue}}`. **Call with `dryRun:true` first** and confirm the count; `dryRun:false` queues one job per member (cap 500). 409 while a batch is in flight. |
 | DELETE | `/guilds/{g}/ai-review/batch?batchId=…` | Cancel a batch's still-pending jobs |
 | POST | `/guilds/{g}/ai-review/archive` | `{archived:bool}` + `{ids:[…]}` or `{all:true}` — soft-archive finished reviews |
-| PUT | `/guilds/{g}/ai-review/prompt` | `{prompt}` (≤20000 chars) — replaces the reviewer's system prompt for this guild; empty string restores the default. Keep the default's guardrails. |
+| PUT | `/guilds/{g}/ai-review/prompt` | `{prompt, variant?: "discord"\|"reddit"}` (≤20000 chars) — replaces that variant's system prompt for this guild; empty string restores its default. Keep the defaults' guardrails. |
 
 Crisis note: a completed verdict may set `crisisFlag` with a `crisisNote`
 quoting a possible self-harm signal. Surface it to a human moderator

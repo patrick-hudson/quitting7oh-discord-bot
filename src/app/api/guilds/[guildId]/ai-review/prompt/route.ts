@@ -9,7 +9,11 @@ import { requireGuildAccess } from "@/lib/authz";
 import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
 
-const schema = z.object({ prompt: z.string().max(20000) });
+const schema = z.object({
+  prompt: z.string().max(20000),
+  // Which rubric to override: contributor-fit (discord) or mod-promotion (reddit).
+  variant: z.enum(["discord", "reddit"]).default("discord"),
+});
 
 export const PUT = withErrors(async (
   req: Request,
@@ -18,19 +22,21 @@ export const PUT = withErrors(async (
   const { guildId } = await ctx.params;
   const session = await requireGuildAccess(guildId);
 
-  const { prompt } = schema.parse(await req.json());
+  const { prompt, variant } = schema.parse(await req.json());
   const trimmed = prompt.trim();
   const value = trimmed.length > 0 ? trimmed : null;
 
   await prisma.guild.update({
     where: { id: guildId },
-    data: { aiReviewPrompt: value },
+    data: variant === "reddit" ? { aiRedditReviewPrompt: value } : { aiReviewPrompt: value },
   });
   audit(
     guildId,
     "aireview.prompt_updated",
-    value ? "AI reviewer prompt customized" : "AI reviewer prompt reset to default",
-    { by: session.user.discordId, custom: value !== null }
+    value
+      ? `AI ${variant} reviewer prompt customized`
+      : `AI ${variant} reviewer prompt reset to default`,
+    { by: session.user.discordId, variant, custom: value !== null }
   );
 
   return NextResponse.json({ ok: true, custom: value !== null });

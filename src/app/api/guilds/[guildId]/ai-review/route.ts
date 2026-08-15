@@ -11,7 +11,11 @@ import { prisma } from "@/lib/db";
 
 const createSchema = z
   .object({
-    targetUserId: z.string().regex(/^\d{17,21}$/, "Invalid Discord user ID"),
+    // discord: targetUserId is a snowflake. reddit: a reddit username
+    // (reviewed against collected RedditPost/RedditComment history with the
+    // mod-promotion rubric).
+    platform: z.enum(["discord", "reddit"]).default("discord"),
+    targetUserId: z.string().min(1).max(30),
     targetName: z.string().max(120).optional(),
     sinceAt: z.string().datetime().nullable().optional(),
     untilAt: z.string().datetime().nullable().optional(),
@@ -21,6 +25,18 @@ const createSchema = z
       .default([]),
   })
   .superRefine((v, ctx) => {
+    const idOk =
+      v.platform === "reddit"
+        ? /^[A-Za-z0-9_-]{3,20}$/.test(v.targetUserId)
+        : /^\d{17,21}$/.test(v.targetUserId);
+    if (!idOk) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["targetUserId"],
+        message:
+          v.platform === "reddit" ? "Invalid reddit username" : "Invalid Discord user ID",
+      });
+    }
     if (v.sinceAt && v.untilAt && new Date(v.sinceAt) >= new Date(v.untilAt)) {
       ctx.addIssue({
         code: "custom",
@@ -63,6 +79,7 @@ export const POST = withErrors(async (
   const job = await prisma.aiReviewJob.create({
     data: {
       guildId,
+      platform: input.platform,
       targetUserId: input.targetUserId,
       targetName: input.targetName ?? null,
       sinceAt: input.sinceAt ? new Date(input.sinceAt) : null,

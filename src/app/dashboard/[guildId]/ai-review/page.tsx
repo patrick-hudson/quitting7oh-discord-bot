@@ -11,7 +11,7 @@ import { BatchReviewForm, CancelBatchButton } from "@/components/AiReviewBatch";
 import { AiReviewList } from "@/components/AiReviewList";
 import { AiReviewPromptEditor } from "@/components/AiReviewPromptEditor";
 import { AutoRefresh } from "@/components/AutoRefresh";
-import { DEFAULT_REVIEW_PROMPT, resolveReviewPrompt } from "@/lib/ai-review";
+import { DEFAULT_REDDIT_MOD_PROMPT, DEFAULT_REVIEW_PROMPT, resolveRedditReviewPrompt, resolveReviewPrompt } from "@/lib/ai-review";
 import { listRoles } from "@/lib/discord-rest";
 
 // Progress of the most recent batch, if it's still working. Rendered as a
@@ -61,7 +61,7 @@ export default async function AiReviewListPage({
   const [guild, jobs, batch, archivedCount, roles] = await Promise.all([
     prisma.guild.findUnique({
       where: { id: guildId },
-      select: { aiReviewPrompt: true },
+      select: { aiReviewPrompt: true, aiRedditReviewPrompt: true },
     }),
     prisma.aiReviewJob.findMany({
       where: {
@@ -99,6 +99,8 @@ export default async function AiReviewListPage({
     jobs.some((j) => j.status === "pending" || j.status === "running");
   const effectivePrompt = resolveReviewPrompt(guild?.aiReviewPrompt);
   const isCustom = Boolean(guild?.aiReviewPrompt?.trim());
+  const effectiveRedditPrompt = resolveRedditReviewPrompt(guild?.aiRedditReviewPrompt);
+  const isRedditCustom = Boolean(guild?.aiRedditReviewPrompt?.trim());
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -157,6 +159,13 @@ export default async function AiReviewListPage({
           initial={effectivePrompt}
           isCustom={isCustom}
           defaultPrompt={DEFAULT_REVIEW_PROMPT}
+        />
+        <AiReviewPromptEditor
+          guildId={guildId}
+          initial={effectiveRedditPrompt}
+          isCustom={isRedditCustom}
+          defaultPrompt={DEFAULT_REDDIT_MOD_PROMPT}
+          variant="reddit"
         />
       </div>
 

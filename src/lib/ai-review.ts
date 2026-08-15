@@ -17,6 +17,7 @@ import { readdir } from "node:fs/promises";
 import readline from "node:readline";
 import path from "node:path";
 import { env } from "@/lib/env";
+import { prisma } from "@/lib/db";
 import { archiveDir } from "@/bot/archive-worker";
 import {
   listTextChannels,
@@ -59,7 +60,7 @@ export type AiVerdict = {
 export type AiReviewResult = {
   verdict: AiVerdict;
   model: string;
-  source: "archive" | "scan";
+  source: "archive" | "scan" | "reddit";
   messagesAnalyzed: number;
   inputTokens: number;
   outputTokens: number;
@@ -79,14 +80,22 @@ export type ReviewStats = {
 
 export type GenerateReviewInput = {
   guildId: string;
+  // "discord": targetUserId is a Discord snowflake, history from the archive/
+  // MessageEvent world. "reddit": targetUserId is a reddit username, history
+  // from the collected RedditPost/RedditComment tables.
+  platform: "discord" | "reddit";
   targetUserId: string;
   targetName: string;
   sinceAt: Date | null;
   untilAt: Date | null;
   channelIds: string[];
-  systemPrompt: string; // resolved override or DEFAULT_REVIEW_PROMPT
+  systemPrompt: string; // resolved override or the platform default
   archiveEnabled: boolean;
   stats?: ReviewStats | null;
+  // platform=reddit only: a mod-confirmed Discord identity for the same
+  // person (RedditIdentityLink). Their Discord history is appended as a
+  // second evidence section.
+  linkedDiscordUserId?: string | null;
 };
 
 // ---------------------------------------------------------------------------
@@ -282,7 +291,7 @@ const VERDICT_TOOL: Anthropic.Tool = {
       outreachMessage: {
         type: "string",
         description:
-          "A warm, honest, first-person draft note a moderator could send this member to open a conversation about the contributor role. Follow the outreach-draft rules in the system prompt. Never mention the crisis signal or clinical scoring here — that is handled separately by a human.",
+          "A warm, honest, first-person draft note a moderator could send this person to open a conversation about the role under consideration. Follow the outreach-draft rules in the system prompt. Never mention the crisis signal or clinical scoring here — that is handled separately by a human.",
       },
     },
     required: [
@@ -415,7 +424,18 @@ export async function generateReview(
 // ---------------------------------------------------------------------------
 
 type GatheredMessage = { ts: number; channel: string; content: string };
-type Gathered = { messages: GatheredMessage[]; source: "archive" | "scan" };
+type Gathered = {
+  messages: GatheredMessage[];
+  source: "archive" | "scan" | "reddit";
+  // platform=reddit: quick aggregates for the stats header.
+  redditMeta?: {
+    posts: number;
+    comments: number;
+    karma: number;
+    subreddits: string[];
+    linkedDiscordMessages: number;
+  };
+};
 
 // Deliberately conservative. The old "~4 chars/token" rule of thumb undercounts
 // on current-generation tokenizers (Sonnet 5's produces ~30% more tokens than
@@ -428,6 +448,7 @@ const APPROX_CHARS_PER_TOKEN = 3;
 const MAX_MSG_CHARS = 2000; // truncate any single monster message
 
 async function gatherMessages(input: GenerateReviewInput): Promise<Gathered> {
+  if (input.platform === "reddit") return gatherRedditHistory(input);
   const { guildId } = input;
   const sinceMs = input.sinceAt?.getTime() ?? null;
   const untilMs = input.untilAt?.getTime() ?? null;
@@ -456,6 +477,82 @@ async function gatherMessages(input: GenerateReviewInput): Promise<Gathered> {
     messages.length > cap ? messages.slice(messages.length - cap) : messages;
 
   return { messages: capped, source: useArchive ? "archive" : "scan" };
+}
+
+// platform=reddit: everything this username posted/commented in the guild's
+// collected subreddits (RedditPost/RedditComment, filled by the poller and
+// the Arctic Shift backfill), chronological, with scores inline. When a mod
+// has linked a Discord identity, that member's Discord history is appended as
+// a clearly labeled second evidence section, sharing the same message cap.
+async function gatherRedditHistory(input: GenerateReviewInput): Promise<Gathered> {
+  const username = input.targetUserId;
+  const range = {
+    ...(input.sinceAt ? { gte: input.sinceAt } : {}),
+    ...(input.untilAt ? { lte: input.untilAt } : {}),
+  };
+  const where = {
+    guildId: input.guildId,
+    author: { equals: username, mode: "insensitive" as const },
+    ...(input.sinceAt || input.untilAt ? { createdAt: range } : {}),
+  };
+  const [posts, comments] = await Promise.all([
+    prisma.redditPost.findMany({ where, orderBy: { createdAt: "asc" } }),
+    prisma.redditComment.findMany({ where, orderBy: { createdAt: "asc" } }),
+  ]);
+
+  const messages: GatheredMessage[] = [
+    ...posts.map((p) => ({
+      ts: p.createdAt.getTime(),
+      channel: `r/${p.subreddit}`,
+      content: squash(
+        `POST "${p.title}"${p.body ? ` — ${p.body}` : ""} [score ${p.score}]`
+      ),
+    })),
+    ...comments.map((c) => ({
+      ts: c.createdAt.getTime(),
+      channel: `r/${c.subreddit}`,
+      content: squash(
+        `${c.postTitle ? `re "${c.postTitle}": ` : ""}${c.body} [score ${c.score}]`
+      ),
+    })),
+  ].sort((a, b) => a.ts - b.ts);
+
+  // Linked Discord identity: append their server messages, labeled.
+  let linkedDiscordMessages = 0;
+  if (input.linkedDiscordUserId) {
+    const discord = await gatherMessages({
+      ...input,
+      platform: "discord",
+      targetUserId: input.linkedDiscordUserId,
+      linkedDiscordUserId: null,
+    });
+    linkedDiscordMessages = discord.messages.length;
+    messages.push(
+      ...discord.messages.map((m) => ({ ...m, channel: `discord ${m.channel}` }))
+    );
+  }
+
+  const cap = env.aiReviewMaxMessages();
+  const capped =
+    messages.length > cap ? messages.slice(messages.length - cap) : messages;
+  return {
+    messages: capped,
+    source: "reddit",
+    redditMeta: {
+      posts: posts.length,
+      comments: comments.length,
+      karma:
+        posts.reduce((n, p) => n + p.score, 0) +
+        comments.reduce((n, c) => n + c.score, 0),
+      subreddits: [...new Set([...posts, ...comments].map((x) => x.subreddit))].sort(),
+      linkedDiscordMessages,
+    },
+  };
+}
+
+function squash(s: string): string {
+  const t = s.replace(/\s+/g, " ").trim();
+  return t.length > MAX_MSG_CHARS ? t.slice(0, MAX_MSG_CHARS) + "…" : t;
 }
 
 // Read the on-disk JSONL archive, keeping only the target author's substantive
@@ -498,7 +595,7 @@ async function gatherFromArchive(
       if (untilMs !== null && ts > untilMs) continue;
       const content = cleanContent(m.content);
       if (!content) continue; // skip attachment/embed-only noise
-      out.push({ ts, channel: name, content });
+      out.push({ ts, channel: `#${name}`, content });
     }
   }
   return out;
@@ -528,7 +625,7 @@ async function gatherFromScan(
       for (const m of matches) {
         const content = cleanContent(m.content);
         if (!content) continue;
-        out.push({ ts: new Date(m.timestamp).getTime(), channel: name, content });
+        out.push({ ts: new Date(m.timestamp).getTime(), channel: `#${name}`, content });
       }
     } catch {
       // one unreadable channel shouldn't sink the whole review
@@ -555,7 +652,7 @@ function cleanContent(raw: string): string {
 
 function formatLine(m: GatheredMessage): string {
   const d = new Date(m.ts).toISOString().slice(0, 10);
-  return `[${d} #${m.channel}] ${m.content}`;
+  return `[${d} ${m.channel}] ${m.content}`;
 }
 
 // Split already-chronological transcript lines into chunks that each stay
@@ -659,6 +756,14 @@ function formatSegment(n: number, s: SignalsInput): string {
 }
 
 function statsHeader(input: GenerateReviewInput, gathered: Gathered): string {
+  if (input.platform === "reddit" && gathered.redditMeta) {
+    const m = gathered.redditMeta;
+    const linked =
+      m.linkedDiscordMessages > 0
+        ? ` A mod-confirmed Discord identity for the same person follows as a second section (${m.linkedDiscordMessages} Discord messages, lines prefixed "discord #channel").`
+        : "";
+    return `You are reviewing the reddit contributor "u/${input.targetName.replace(/^u\//, "")}" for subreddit moderation. The sample below is their collected activity in ${m.subreddits.map((x) => `r/${x}`).join(", ")}: ${m.posts} post(s) and ${m.comments} comment(s), ${m.karma} combined karma. Scores appear inline; treat them as popularity, not judgment.${linked}`;
+  }
   const range = [
     input.sinceAt ? `from ${input.sinceAt.toISOString().slice(0, 10)}` : "from the beginning",
     input.untilAt ? `until ${input.untilAt.toISOString().slice(0, 10)}` : "to now",
@@ -711,3 +816,67 @@ export function resolveReviewPrompt(override: string | null | undefined): string
   const trimmed = (override ?? "").trim();
   return trimmed.length > 0 ? trimmed : DEFAULT_REVIEW_PROMPT;
 }
+
+export function resolveRedditReviewPrompt(
+  override: string | null | undefined
+): string {
+  const trimmed = (override ?? "").trim();
+  return trimmed.length > 0 ? trimmed : DEFAULT_REDDIT_MOD_PROMPT;
+}
+
+// Default rubric for platform=reddit reviews: is this contributor ready to be
+// a subreddit MODERATOR? Same evidence discipline and guardrails as the
+// Discord contributor prompt; the role and its failure modes differ.
+export const DEFAULT_REDDIT_MOD_PROMPT = `You are a careful, experienced reviewer helping the moderators of a kratom/7-OH recovery subreddit decide whether a contributor may be ready to join the moderation team.
+
+Subreddit moderators hold real power over a vulnerable community: they remove content, guide rule enforcement, respond to reports and modmail, and set the tone strangers meet on their worst day. The role needs steadiness under provocation, rule-consistent judgment, and safety vigilance — not just being a prolific or popular poster.
+
+You will receive material derived from ONE person's public activity in the community's subreddits: posts and comments with dates, subreddit names, and scores — possibly as pre-analyzed segment summaries when the history is long. When a moderator has confirmed this person's Discord identity, a clearly labeled section of their Discord messages may follow; weigh it as the same person on a different surface.
+
+The central question, throughout: based only on the available evidence, would you hand this person a remove button and the keys to modmail in a recovery community?
+
+Core evidence rules — evaluate demonstrated behavior, not reputation:
+- Every meaningful strength or concern must be grounded in the supplied material. Never invent behavior or motives, and never manufacture quotes.
+- Lack of evidence is NOT evidence of a problem. Nobody's sample shows every moderator skill; unobserved is not "cannot".
+- Repeated patterns outweigh isolated moments; for safety issues, severity can outweigh frequency.
+- Scores measure popularity, not judgment. High karma is weak evidence of mod-readiness; a downvoted comment can be the correct call. Read what they said, not how it was voted.
+- Recent behavior outweighs older behavior when there is credible change.
+- Being far along in recovery is not a qualification by itself, and honest struggle is not a disqualifier.
+- Match your language to the evidence: "several exchanges show...", "one thread suggests...", "the sample doesn't show enough to judge...".
+
+Weigh the evidence across these dimensions (internal guidance — not output fields):
+
+1. Judgment and accuracy — do they give rule-consistent, factually careful guidance? Do they distinguish personal experience from fact, avoid medical or taper directives delivered as certainty, and correct themselves when wrong?
+
+2. De-escalation under provocation (weigh heavily) — Reddit is adversarial: trolls, sourcing-seekers, angry relapsers, bad-faith arguments. Do they lower the temperature, disengage when arguing helps nobody, and disagree without humiliating? Sarcasm and directness are fine; look at the target and the effect.
+
+3. Safety vigilance — do they push back on sourcing/vendor talk, glorified use, dangerous dosing claims, and miracle-cure advice? Do they respond to crisis-adjacent content with care rather than platitudes or silence? A future mod's instincts here matter more than their comment volume.
+
+4. How they treat strugglers vs rule-breakers — warmth toward people in pain, firmness toward behavior that endangers the community, and the ability to tell the two apart. Contempt for strugglers is disqualifying in a way contempt for spam never is.
+
+5. Community investment — sustained presence over time, welcoming newcomers, answering the same beginner questions with patience, showing up in hard threads and not just easy ones.
+
+6. Temperament for the job — can they be told no? Do they escalate to mods appropriately rather than freelancing enforcement in the comments ("mini-modding" is fine in moderation — constant self-appointed enforcement with hostility is a flag)? Any sign they want the role for status or scores to settle?
+
+Red flags — surface only when actually supported by the material: sourcing or vendor facilitation in any form; medical/taper directives stated as fact; mocking or humiliating strugglers; sustained flame wars they escalate; brigading, doxxing, or vote-manipulation talk; dishonesty visible in the sample; using the community mainly for self-promotion; harassment; treating rules as applying to others but not themselves. Grade severity — one heated thread from months ago is not a pattern, and old problems followed by sustained change are their own category.
+
+How to use the output fields (the tool schema controls the shape):
+- strengths / concerns items: "point" describes the observed behavior; "evidence" quotes or closely paraphrases it; "context" holds the subreddit and rough date.
+- concerns MUST contain only observed behavior that argues against giving them mod powers. Evidence gaps (never seen in a conflict, no crisis-adjacent threads in the sample, short history) belong in the summary as neutral gaps and in confidence — never in concerns, never reworded as negatives. A possible_fit or not_yet review can have an empty concerns list.
+- summary: a short narrative for the mod team — the overall picture, the strongest evidence both ways, material gaps stated neutrally.
+
+Recommendation (choose exactly one):
+- strong_fit: repeated, well-rounded evidence of mod-grade judgment — especially de-escalation and safety vigilance. Deliberately hard to earn; volume and karma are never enough.
+- possible_fit: real signal, but gaps or a point or two worth a conversation first.
+- not_yet: not enough demonstrated signal — often just too little visible interaction under pressure. Means "we need more evidence", not "no".
+- concern: observed behavior currently argues against mod powers. Sparse evidence alone must never produce concern.
+
+Confidence is confidence in the ASSESSMENT: high = repeated consistent evidence across situations including hard ones; medium = meaningful but gappy; low = sparse, one-note, or heavily summarized. A single well-documented severe incident can support a high-confidence concern.
+
+Crisis handling (separate from the fit question): if the material contains a concrete signal of possible self-harm or suicide risk, set crisisFlag=true and put the specific quote or close paraphrase with rough timing in crisisNote so a human can find it. Venting, dark humor, and withdrawal misery are common here and are not by themselves crisis signals. Never let a crisis disclosure lower the recommendation; route it to humans and judge mod-fit from behavior.
+
+Hard limits: do NOT infer or use race, ethnicity, sex or gender, sexual orientation, religion, nationality, age, disability, diagnosis, or any protected characteristic. Do not diagnose anything. This is decision support for humans, never an automated gate; write with that humility.
+
+Outreach draft (outreachMessage — always required): a short first-person note a mod could send as a reddit DM or modmail. Warm, plainspoken, specific to real things they've done in the sub. For strong_fit / possible_fit: say the team has noticed (name one or two real things) and ask if they'd be open to talking about helping moderate. For not_yet / concern: not a rejection — open a genuine conversation about the one or two things you'd want to see or talk through. Never mention AI, scores, internal labels, or any crisis signal. A few short sentences, ending with an invitation to reply.
+
+Before finalizing, silently check: every strength traces to the material; every concern is observed behavior, not a gap; karma didn't stand in for judgment; one bad thread didn't outweigh months of steadiness; the crisis field is concrete or absent; and the recommendation answers the actual question — trust with moderation power over vulnerable people.`;
