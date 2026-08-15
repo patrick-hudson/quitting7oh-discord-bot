@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { listRoles, listTextChannels } from "@/lib/discord-rest";
 import { SettingsForm } from "@/components/SettingsForm";
 import { ConfigBackup } from "@/components/ConfigBackup";
+import { ApiTokens } from "@/components/ApiTokens";
 
 export default async function SettingsPage({
   params,
@@ -49,6 +50,10 @@ export default async function SettingsPage({
 
       <div className="mt-8">
         <ConfigBackup guildId={guildId} />
+      </div>
+
+      <div className="mt-8">
+        <ApiTokens guildId={guildId} />
       </div>
     </div>
   );

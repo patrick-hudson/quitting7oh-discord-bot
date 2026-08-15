@@ -605,6 +605,25 @@ model AiReviewJob {
   @@index([guildId, batchId])
 }
 
+// Personal bearer tokens for the HTTP API (see API.md). A token acts AS its
+// creator: requests send `Authorization: Bearer <token>` and pass through the
+// same per-guild authorization as a portal session, so a token can do exactly
+// what its creator can — no more, no less. Only the SHA-256 hash is stored;
+// the plaintext appears once at mint time. Token management itself is
+// session-only, so a leaked token can't mint replacements or cover its tracks.
+model ApiToken {
+  id            String    @id @default(cuid())
+  name          String // human label, e.g. "claude-agent"
+  tokenHash     String    @unique // sha256 hex of the full plaintext token
+  tokenPrefix   String // first characters, for display in the list UI
+  discordUserId String // the portal user this token acts as
+  createdAt     DateTime  @default(now())
+  lastUsedAt    DateTime?
+  revokedAt     DateTime? // set = dead; kept for the audit trail
+
+  @@index([discordUserId])
+}
+
 // --- Auth.js (NextAuth v5) tables ---
 // Standard Prisma adapter schema; lets users sign in via Discord OAuth.
 

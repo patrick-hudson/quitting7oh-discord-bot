@@ -75,6 +75,7 @@ The stats worker is gateway-free and can move to its own container if the bot ev
 
 ## Companion docs
 
+- [API.md](API.md): the HTTP API — bearer-token auth for agents and scripts, every endpoint, async-job patterns, recipes.
 - [KA_MEETINGS.md](KA_MEETINGS.md): the seeded Kratom Anonymous meeting posts + seeder script.
 - [REMINDERS.md](REMINDERS.md): follow-up reminders and the bulk-enable scripts.
 - [REDDIT.md](REDDIT.md): the Reddit announcer.
