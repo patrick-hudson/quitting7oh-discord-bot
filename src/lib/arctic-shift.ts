@@ -1,8 +1,9 @@
 // Minimal Arctic Shift client for the one-time historical backfill. Arctic
 // Shift (arctic-shift.photon-reddit.com) archives Reddit from 2005 to the
 // present and serves it free of charge — "this is a free service, so be
-// considerate", so the backfill worker paces requests and stops the moment it
-// sees a 429. Scores in the archive are settled values, which is exactly what
+// considerate", so the backfill worker paces requests and backs off the moment
+// it sees a 429, a slow-down 422, or a 5xx while the service is degraded.
+// Scores in the archive are settled values, which is exactly what
 // the karma leaderboard wants for history.
 
 import type { RedditComment, RedditPost } from "@/lib/reddit";
@@ -17,12 +18,14 @@ function userAgent(): string {
   );
 }
 
-export class ArcticRateLimitError extends Error {
-  // When the server said limits reset (from X-RateLimit-Reset /
-  // X-RateLimit-Reset-At, per the API docs); null when it didn't say.
+// Any condition where the right response is "wait and retry": 429s, their
+// 422 "maybe slow down" query timeouts, 5xx while the service is degraded,
+// and network-level fetch failures. resetAtMs comes from X-RateLimit-Reset /
+// X-RateLimit-Reset-At when the server sent one; null otherwise.
+export class ArcticTransientError extends Error {
   constructor(detail: string, public resetAtMs: number | null) {
-    super(`arctic shift asked us to slow down (${detail})`);
-    this.name = "ArcticRateLimitError";
+    super(`arctic shift unavailable, backing off (${detail})`);
+    this.name = "ArcticTransientError";
   }
 }
 
@@ -61,20 +64,30 @@ async function search(
   const params = new URLSearchParams({ subreddit, limit: "100", sort: "asc" });
   // First page has no cursor yet; the API rejects epoch 0 as a date.
   if (afterEpoch > 0) params.set("after", String(afterEpoch));
-  const res = await fetch(`${BASE}/api/${kind}/search?${params.toString()}`, {
-    headers: { "User-Agent": userAgent(), Accept: "application/json" },
-  });
-  // 429 = rate limited; 422 "Timeout. Maybe slow down a bit" is their other
-  // slow-down signal (server-side query timeout under load). Both mean the
-  // same thing for us: cool off, don't error-spam. The docs say to wait for
-  // the X-RateLimit-Reset(-At) headers when present.
-  if (res.status === 429) {
-    throw new ArcticRateLimitError("429", resetFromHeaders(res));
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/api/${kind}/search?${params.toString()}`, {
+      headers: { "User-Agent": userAgent(), Accept: "application/json" },
+    });
+  } catch (err) {
+    // DNS / connection / TLS-level failure — the service (or the network to
+    // it) is down, which is transient by definition.
+    throw new ArcticTransientError(
+      `network: ${(err as Error).message?.slice(0, 80)}`,
+      null
+    );
+  }
+  // 429 = rate limited; 422 "Timeout. Maybe slow down a bit" is a server-side
+  // query timeout under load; 5xx = the service is degraded outright. All
+  // mean the same thing for us: cool off, don't error-spam. The docs say to
+  // wait for the X-RateLimit-Reset(-At) headers when present.
+  if (res.status === 429 || res.status >= 500) {
+    throw new ArcticTransientError(String(res.status), resetFromHeaders(res));
   }
   if (!res.ok) {
     const text = (await res.text()).slice(0, 200);
     if (res.status === 422 && /slow down|timeout/i.test(text)) {
-      throw new ArcticRateLimitError(`422 ${text.slice(0, 60)}`, resetFromHeaders(res));
+      throw new ArcticTransientError(`422 ${text.slice(0, 60)}`, resetFromHeaders(res));
     }
     throw new Error(`arctic ${kind} ${res.status}: ${text}`);
   }

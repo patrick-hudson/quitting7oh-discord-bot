@@ -11,7 +11,7 @@
 import { prisma } from "@/lib/db";
 import { audit } from "@/lib/audit";
 import {
-  ArcticRateLimitError,
+  ArcticTransientError,
   fetchArcticComments,
   fetchArcticPosts,
 } from "@/lib/arctic-shift";
@@ -142,7 +142,7 @@ async function tick() {
       `[reddit-backfill] r/${state.subreddit} ${kind}: +${fetched} this tick, continuing next tick`
     );
   } catch (err) {
-    if (err instanceof ArcticRateLimitError) {
+    if (err instanceof ArcticTransientError) {
       backoffStreak++;
       const progressive = Math.min(
         BACKOFF_CAP_MS,
