@@ -75,17 +75,36 @@ export const POST = withErrors(async (
   return NextResponse.json({ job: { id: job.id, status: job.status } });
 });
 
+// Optional query filters for API callers: ?status=, ?targetUserId=,
+// ?batchId=, ?archived=true|false, ?limit= (max 500).
 export const GET = withErrors(async (
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ guildId: string }> }
 ) => {
   const { guildId } = await ctx.params;
   await requireGuildAccess(guildId);
 
+  const q = new URL(req.url).searchParams;
+  const status = q.get("status");
+  const targetUserId = q.get("targetUserId");
+  const batchId = q.get("batchId");
+  const archived = q.get("archived");
+  const limit = Math.min(500, Math.max(1, Number(q.get("limit") ?? "100") || 100));
+
   const jobs = await prisma.aiReviewJob.findMany({
-    where: { guildId },
+    where: {
+      guildId,
+      ...(status ? { status } : {}),
+      ...(targetUserId ? { targetUserId } : {}),
+      ...(batchId ? { batchId } : {}),
+      ...(archived === "true"
+        ? { archivedAt: { not: null } }
+        : archived === "false"
+          ? { archivedAt: null }
+          : {}),
+    },
     orderBy: { createdAt: "desc" },
-    take: 100,
+    take: limit,
     select: {
       id: true,
       targetUserId: true,

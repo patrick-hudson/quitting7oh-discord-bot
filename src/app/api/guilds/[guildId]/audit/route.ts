@@ -1,0 +1,47 @@
+// Bot audit log as JSON — same query the portal's Audit page runs. Filter by
+// category prefix (e.g. kind=post covers post.fired / post.fire_failed),
+// paginate backward with `before` (ISO timestamp). See API.md.
+
+import { NextResponse } from "next/server";
+import { withErrors } from "@/lib/api";
+import { requireGuildAccess } from "@/lib/authz";
+import { prisma } from "@/lib/db";
+
+const MAX_PAGE = 200;
+
+export const GET = withErrors(async (
+  req: Request,
+  ctx: { params: Promise<{ guildId: string }> }
+) => {
+  const { guildId } = await ctx.params;
+  await requireGuildAccess(guildId);
+
+  const url = new URL(req.url);
+  const kind = url.searchParams.get("kind") ?? "";
+  const before = url.searchParams.get("before");
+  const beforeDate = before ? new Date(before) : null;
+  const limit = Math.min(
+    MAX_PAGE,
+    Math.max(1, Number(url.searchParams.get("limit") ?? "100") || 100)
+  );
+
+  const entries = await prisma.botAuditLog.findMany({
+    where: {
+      guildId,
+      ...(kind ? { kind: { startsWith: kind + "." } } : {}),
+      ...(beforeDate && !Number.isNaN(beforeDate.getTime())
+        ? { createdAt: { lt: beforeDate } }
+        : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+  });
+  return NextResponse.json({
+    entries,
+    // Pass as ?before= to fetch the next (older) page; null = no more.
+    nextBefore:
+      entries.length === limit
+        ? entries[entries.length - 1].createdAt.toISOString()
+        : null,
+  });
+});

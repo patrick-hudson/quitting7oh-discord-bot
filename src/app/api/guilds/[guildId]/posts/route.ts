@@ -68,3 +68,18 @@ export const POST = withErrors(async (
   });
   return NextResponse.json({ post });
 });
+
+// GET — every scheduled post, full rows (no blobs on this model). The portal
+// pages read the DB directly; this is the API caller's equivalent.
+export const GET = withErrors(async (
+  _req: Request,
+  ctx: { params: Promise<{ guildId: string }> }
+) => {
+  const { guildId } = await ctx.params;
+  await requireGuildAccess(guildId);
+  const posts = await prisma.scheduledPost.findMany({
+    where: { guildId },
+    orderBy: { name: "asc" },
+  });
+  return NextResponse.json({ posts });
+});

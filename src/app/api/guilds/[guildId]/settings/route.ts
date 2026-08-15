@@ -119,3 +119,30 @@ export const PATCH = withErrors(async (
   });
   return NextResponse.json({ guild: updated });
 });
+
+// GET — current guild settings, mirroring what PATCH accepts (plus metadata).
+export const GET = withErrors(async (
+  _req: Request,
+  ctx: { params: Promise<{ guildId: string }> }
+) => {
+  const { guildId } = await ctx.params;
+  await requireGuildAccess(guildId);
+  const guild = await prisma.guild.findUnique({
+    where: { id: guildId },
+    select: {
+      id: true,
+      name: true,
+      timezone: true,
+      adminRoleId: true,
+      redditEnabled: true,
+      redditSubreddits: true,
+      redditChannelId: true,
+      leaveEnabled: true,
+      leaveChannelId: true,
+      welcomeDmEnabled: true,
+      archiveEnabled: true,
+    },
+  });
+  if (!guild) return NextResponse.json({ error: "Guild not found" }, { status: 404 });
+  return NextResponse.json({ guild });
+});

@@ -90,3 +90,17 @@ export const DELETE = withErrors(async (
   });
   return NextResponse.json({ ok: true });
 });
+
+// GET — one post, full row.
+export const GET = withErrors(async (
+  _req: Request,
+  ctx: { params: Promise<{ guildId: string; id: string }> }
+) => {
+  const { guildId, id } = await ctx.params;
+  await requireGuildAccess(guildId);
+  const post = await prisma.scheduledPost.findUnique({ where: { id } });
+  if (!post || post.guildId !== guildId) {
+    return NextResponse.json({ error: "Post not found" }, { status: 404 });
+  }
+  return NextResponse.json({ post });
+});

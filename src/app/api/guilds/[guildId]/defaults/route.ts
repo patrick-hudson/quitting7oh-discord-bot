@@ -48,3 +48,18 @@ export const PATCH = withErrors(async (
   });
   return NextResponse.json({ guild });
 });
+
+// GET — the current default message rosters (empty array = baked-in roster).
+export const GET = withErrors(async (
+  _req: Request,
+  ctx: { params: Promise<{ guildId: string }> }
+) => {
+  const { guildId } = await ctx.params;
+  await requireGuildAccess(guildId);
+  const guild = await prisma.guild.findUnique({
+    where: { id: guildId },
+    select: { reminderTemplates: true, leaveTemplates: true, welcomeDmTemplates: true },
+  });
+  if (!guild) return NextResponse.json({ error: "Guild not found" }, { status: 404 });
+  return NextResponse.json(guild);
+});
