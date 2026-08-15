@@ -56,6 +56,7 @@ const fmtMonth = (m: string) =>
   });
 
 export function StatsDashboard({ data }: { data: ServerStatsData }) {
+  const [range, setRange] = useState<Range>("90");
   if (data.tiles.totalMessages === 0) {
     return (
       <div className="mt-8 rounded-2xl border border-dashed border-white/10 p-10 text-center text-white/60">
@@ -66,15 +67,60 @@ export function StatsDashboard({ data }: { data: ServerStatsData }) {
   }
   return (
     <div className="mt-6 space-y-10">
+      <div className="flex items-center justify-end gap-2">
+        <span className="text-[11px] text-white/40">
+          Time range — applies to every time series; fixed-window cards say
+          their own window
+        </span>
+        <div className="flex gap-1">
+          {(["30", "90", "all"] as Range[]).map((r) => (
+            <button
+              key={r}
+              type="button"
+              onClick={() => setRange(r)}
+              className={`rounded-md px-2 py-0.5 text-[11px] ring-1 transition ${
+                range === r
+                  ? "bg-white/10 text-white/90 ring-white/20"
+                  : "text-white/50 ring-white/10 hover:bg-white/5"
+              }`}
+            >
+              {r === "all" ? "All" : `${r}d`}
+            </button>
+          ))}
+        </div>
+      </div>
       <Tiles data={data} />
-      <ActivitySection data={data} />
-      <MembersSection data={data} />
-      <RecoverySection data={data} />
-      <ReactionsSection data={data} />
+      <ActivitySection data={data} range={range} />
+      <MembersSection data={data} range={range} />
+      <RecoverySection data={data} range={range} />
+      <ReactionsSection data={data} range={range} />
       <RecordsSection data={data} />
-      <ModerationSection data={data} />
+      <ModerationSection data={data} range={range} />
     </div>
   );
+}
+
+// Date-keyed range filtering. Cutoffs compare ISO strings, so sparse series
+// (only days with activity) window by calendar time, not by row count.
+function cutoffISO(range: Range): string | null {
+  if (range === "all") return null;
+  return new Date(Date.now() - Number(range) * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+}
+
+function inRange<T>(rows: T[], key: keyof T, range: Range): T[] {
+  const cutoff = cutoffISO(range);
+  if (cutoff === null) return rows;
+  // Month keys ("2026-08") compare against the cutoff's own month.
+  return rows.filter((r) => {
+    const v = String(r[key]);
+    return v >= (v.length === 7 ? cutoff.slice(0, 7) : cutoff);
+  });
+}
+
+function NoDataInRange() {
+  return <p className="text-sm text-white/40">No data points in this range.</p>;
 }
 
 // ---------------------------------------------------------------------------
@@ -170,41 +216,21 @@ function Delta({
 
 type Range = "30" | "90" | "all";
 
-function ActivitySection({ data }: { data: ServerStatsData }) {
-  const [range, setRange] = useState<Range>("90");
+function ActivitySection({ data, range }: { data: ServerStatsData; range: Range }) {
   const series = useMemo(() => {
+    // Rolling average over the full history first, THEN window — so the first
+    // visible days still average against the days before the window.
     const rows = data.messagesPerDay.map((d, i, arr) => {
       const from = Math.max(0, i - 6);
       const avg =
         arr.slice(from, i + 1).reduce((n, r) => n + r.count, 0) / (i - from + 1);
       return { ...d, avg: Math.round(avg * 10) / 10 };
     });
-    if (range === "all") return rows;
-    return rows.slice(-Number(range));
+    return inRange(rows, "date", range);
   }, [data.messagesPerDay, range]);
 
   return (
-    <Section
-      title="Activity"
-      aside={
-        <div className="flex gap-1">
-          {(["30", "90", "all"] as Range[]).map((r) => (
-            <button
-              key={r}
-              type="button"
-              onClick={() => setRange(r)}
-              className={`rounded-md px-2 py-0.5 text-[11px] ring-1 transition ${
-                range === r
-                  ? "bg-white/10 text-white/90 ring-white/20"
-                  : "text-white/50 ring-white/10 hover:bg-white/5"
-              }`}
-            >
-              {r === "all" ? "All" : `${r}d`}
-            </button>
-          ))}
-        </div>
-      }
-    >
+    <Section title="Activity">
       <Card
         title="Messages per day"
         legend={[
@@ -336,15 +362,23 @@ function ChannelBars({ channels }: { channels: ServerStatsData["channels"] }) {
 // Members & growth
 // ---------------------------------------------------------------------------
 
-function MembersSection({ data }: { data: ServerStatsData }) {
+function MembersSection({ data, range }: { data: ServerStatsData; range: Range }) {
   const hasSnapshots = data.memberSeries.length > 1;
+  const weeklyActive = inRange(data.weeklyActive, "weekStart", range);
+  const memberSeries = inRange(data.memberSeries, "date", range);
+  const joinLeave = inRange(data.joinLeave, "weekStart", range);
+  const joinsPerMonth = inRange(data.joinsPerMonth, "month", range);
+  const activation = inRange(data.activation, "month", range);
   return (
     <Section title="Members & growth">
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Weekly active members">
+          {weeklyActive.length === 0 ? (
+            <NoDataInRange />
+          ) : (
           <ResponsiveContainer width="100%" height={200}>
             <LineChart
-              data={data.weeklyActive}
+              data={weeklyActive}
               margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
             >
               <CartesianGrid stroke={GRID} vertical={false} />
@@ -369,13 +403,17 @@ function MembersSection({ data }: { data: ServerStatsData }) {
               />
             </LineChart>
           </ResponsiveContainer>
+          )}
         </Card>
 
         {hasSnapshots ? (
           <Card title="Member count">
+            {memberSeries.length < 2 ? (
+              <NoDataInRange />
+            ) : (
             <ResponsiveContainer width="100%" height={200}>
               <AreaChart
-                data={data.memberSeries}
+                data={memberSeries}
                 margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
               >
                 <CartesianGrid stroke={GRID} vertical={false} />
@@ -407,6 +445,7 @@ function MembersSection({ data }: { data: ServerStatsData }) {
                 />
               </AreaChart>
             </ResponsiveContainer>
+            )}
           </Card>
         ) : (
           <HintCard title="Member count over time">
@@ -414,6 +453,33 @@ function MembersSection({ data }: { data: ServerStatsData }) {
           </HintCard>
         )}
       </div>
+
+      {joinsPerMonth.length > 0 && (
+        <Card
+          title="New members per month"
+          sub="Recovered join announcements + live gateway joins — includes people who later left"
+        >
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart
+              data={joinsPerMonth}
+              margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
+            >
+              <CartesianGrid stroke={GRID} vertical={false} />
+              <XAxis
+                dataKey="month"
+                tick={TICK}
+                tickFormatter={fmtMonth}
+                axisLine={false}
+                tickLine={false}
+                minTickGap={24}
+              />
+              <YAxis tick={TICK} axisLine={false} tickLine={false} width={40} />
+              <Tooltip content={<DarkTooltip labelFmt={fmtMonth} />} />
+              <Bar dataKey="joins" name="Joined" fill={C.aqua} radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </Card>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-2">
         {hasSnapshots && data.joinLeave.length > 0 ? (
@@ -424,9 +490,12 @@ function MembersSection({ data }: { data: ServerStatsData }) {
               { label: "Left", color: C.red },
             ]}
           >
+            {joinLeave.length === 0 ? (
+              <NoDataInRange />
+            ) : (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart
-                data={data.joinLeave}
+                data={joinLeave}
                 margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
                 barGap={2}
               >
@@ -444,6 +513,7 @@ function MembersSection({ data }: { data: ServerStatsData }) {
                 <Bar dataKey="leaves" name="Left" fill={C.red} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
+            )}
           </Card>
         ) : (
           <HintCard title="Joins vs leaves">
@@ -453,18 +523,18 @@ function MembersSection({ data }: { data: ServerStatsData }) {
 
         <Card
           title="New-member activation"
-          sub="Members who posted within 7 days of joining (of those still here)"
+          sub="Joiners who posted within their first week — includes people who later left"
           legend={[
             { label: "Joined", color: C.blue },
             { label: "Posted in first week", color: C.aqua },
           ]}
         >
-          {data.activation.length === 0 ? (
-            <p className="text-sm text-white/40">No join data in the tracked window yet.</p>
+          {activation.length === 0 ? (
+            <p className="text-sm text-white/40">No join data in this range.</p>
           ) : (
             <ResponsiveContainer width="100%" height={200}>
               <BarChart
-                data={data.activation}
+                data={activation}
                 margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
                 barGap={2}
               >
@@ -591,13 +661,18 @@ function ConcentrationBars({
 // Recovery pulse
 // ---------------------------------------------------------------------------
 
-function RecoverySection({ data }: { data: ServerStatsData }) {
+function RecoverySection({ data, range }: { data: ServerStatsData; range: Range }) {
   const r = data.recovery;
   if (r.tiers.length === 0 && r.claimsPerMonth.length === 0) return null;
   // Ordinal blue ramp across tiers (ordered stages), floor-clamped for dark.
   const tierColor = (i: number) =>
     SEQ[Math.min(SEQ.length - 1, Math.round((i / Math.max(1, r.tiers.length - 1)) * (SEQ.length - 1)))];
-  const seriesData = r.tierSeries.map((p) => ({ date: p.date, ...p.counts }));
+  const seriesData = inRange(
+    r.tierSeries.map((p) => ({ date: p.date, ...p.counts })),
+    "date",
+    range
+  );
+  const claims = inRange(r.claimsPerMonth, "month", range);
   return (
     <Section title="Recovery pulse">
       {r.tiers.length > 0 && (
@@ -609,7 +684,7 @@ function RecoverySection({ data }: { data: ServerStatsData }) {
       )}
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {r.tierSeries.length > 1 && r.tiers.length > 0 ? (
+        {seriesData.length > 1 && r.tiers.length > 0 ? (
           <Card
             title="Milestone roles over time"
             legend={r.tiers.map((t, i) => ({
@@ -657,11 +732,11 @@ function RecoverySection({ data }: { data: ServerStatsData }) {
         )}
 
         <div className="grid gap-4">
-          {r.claimsPerMonth.length > 0 && (
+          {claims.length > 0 && (
             <Card title="Milestones celebrated" sub="Claims per month (last ~90 days of audit history)">
               <ResponsiveContainer width="100%" height={r.tiers.length > 0 ? 96 : 200}>
                 <BarChart
-                  data={r.claimsPerMonth}
+                  data={claims}
                   margin={{ top: 4, right: 8, left: -12, bottom: 0 }}
                 >
                   <XAxis
@@ -721,8 +796,9 @@ function ConcentrationLike({
 // Reactions
 // ---------------------------------------------------------------------------
 
-function ReactionsSection({ data }: { data: ServerStatsData }) {
+function ReactionsSection({ data, range }: { data: ServerStatsData; range: Range }) {
   const r = data.reactions;
+  const perDay = inRange(r.perDay, "date", range);
   if (r.trackingSince === null) {
     return (
       <Section title="Reactions">
@@ -756,7 +832,7 @@ function ReactionsSection({ data }: { data: ServerStatsData }) {
         >
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart
-              data={r.perDay}
+              data={perDay}
               margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
             >
               <CartesianGrid stroke={GRID} vertical={false} />
@@ -877,16 +953,18 @@ function RecordsSection({ data }: { data: ServerStatsData }) {
   );
 }
 
-function ModerationSection({ data }: { data: ServerStatsData }) {
+function ModerationSection({ data, range }: { data: ServerStatsData; range: Range }) {
   if (data.moderation.length === 0) return null;
-  const kinds = [...new Set(data.moderation.map((m) => m.kind))].sort();
+  const moderation = inRange(data.moderation, "month", range);
+  const kinds = [...new Set(moderation.map((m) => m.kind))].sort();
   const kindColors = [C.red, C.orange, C.yellow, C.magenta, C.violet, C.blue];
-  const months = [...new Set(data.moderation.map((m) => m.month))].sort();
+  const months = [...new Set(moderation.map((m) => m.month))].sort();
   const rows = months.map((month) => {
     const row: Record<string, string | number> = { month };
-    for (const m of data.moderation) if (m.month === month) row[m.kind] = m.count;
+    for (const m of moderation) if (m.month === month) row[m.kind] = m.count;
     return row;
   });
+  if (rows.length === 0) return null;
   return (
     <Section title="Moderation" note="Mod-only context — not part of any shared view">
       <Card
