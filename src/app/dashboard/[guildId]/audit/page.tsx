@@ -21,6 +21,7 @@ const CATEGORIES = [
   { key: "milestone", label: "Milestones" },
   { key: "config", label: "Config" },
   { key: "leaderboard", label: "Leaderboard" },
+  { key: "stats", label: "Stats" },
   { key: "export", label: "Exports" },
   { key: "snapshot", label: "Snapshots" },
   { key: "archive", label: "Archive" },

@@ -151,6 +151,33 @@ model MessageEvent {
   @@index([guildId, authorId])
 }
 
+// One row per reaction added, mirroring MessageEvent's role for the stats
+// page: reaction volume over time, favorite emojis, most generous reactors.
+// Populated by the bot's MessageReactionAdd handler; removals are deliberately
+// not tracked (a reaction that existed is still an engagement signal), and the
+// unique constraint stops re-adds/gateway redeliveries from double-counting.
+// No backfill is possible — data accumulates from when this shipped.
+model ReactionEvent {
+  id        String   @id @default(cuid())
+  guildId   String
+  channelId String
+  messageId String
+  reactorId String // who reacted
+  emoji     String // unicode emoji, or custom-emoji name
+  isBot     Boolean  @default(false)
+  // Backfilled rows were recovered from the message archive (see
+  // src/bot/reaction-backfill.ts): the reactor set is what the API reported at
+  // crawl time, and sentAt is the MESSAGE's timestamp — Discord doesn't store
+  // when a reaction was added, so historical charts date reactions by the
+  // message they landed on.
+  backfilled Boolean @default(false)
+  sentAt    DateTime @default(now())
+
+  @@unique([messageId, reactorId, emoji])
+  @@index([guildId, sentAt])
+  @@index([guildId, reactorId])
+}
+
 // A scheduled message. Either `cron` (recurring) or `runAt` (one-off) is set,
 // never both. `active=false` pauses without deleting. `nextFireAt` is
 // pre-computed on every write so the scheduler can use an indexed lookup.
@@ -433,6 +460,9 @@ model ArchiveChannelState {
   // covers messages archived before MessageEvent-feeding existed). null = not
   // yet done.
   eventsBackfilledAt DateTime?
+  // When this channel's archived reactions were crawled into ReactionEvent
+  // (one-time; see src/bot/reaction-backfill.ts). null = not yet done.
+  reactionsBackfilledAt DateTime?
   updatedAt          DateTime @updatedAt
 
   @@unique([guildId, channelId])
@@ -470,6 +500,20 @@ model RestoreJob {
 // too slow to run per page load). `data` holds the finished rows + channel-name
 // map so the page is a pure read with zero Discord calls.
 model LeaderboardCache {
+  guildId          String    @id
+  data             Json      @default("{}")
+  generatedAt      DateTime?
+  computing        Boolean   @default(false)
+  refreshRequested Boolean   @default(false)
+  updatedAt        DateTime  @updatedAt
+}
+
+// Precomputed server activity/health stats, one row per guild — same pattern
+// as LeaderboardCache. Recomputed on a schedule by the stats worker
+// (src/bot/stats-worker.ts); the heavy lifting is Postgres aggregates over
+// MessageEvent plus snapshot mining, so pages stay pure reads. `data` shape is
+// ServerStatsData in src/lib/server-stats.ts.
+model StatsCache {
   guildId          String    @id
   data             Json      @default("{}")
   generatedAt      DateTime?

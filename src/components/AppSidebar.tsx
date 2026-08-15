@@ -12,6 +12,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Award,
   CalendarClock,
+  ChartColumn,
   ChevronsUpDown,
   Download,
   History,
@@ -76,7 +77,10 @@ export function AppSidebar({
   }[] = [
     {
       label: null,
-      items: [{ href: base, label: "Dashboard", icon: LayoutDashboard, exact: true }],
+      items: [
+        { href: base, label: "Dashboard", icon: LayoutDashboard, exact: true },
+        { href: `${base}/stats`, label: "Server stats", icon: ChartColumn },
+      ],
     },
     {
       label: "Posting",

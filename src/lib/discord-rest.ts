@@ -730,6 +730,59 @@ export async function getGuildRaw(guildId: string): Promise<DiscordGuildRaw> {
   return res.json();
 }
 
+// Users who currently have `emoji` on a message — used by the one-time
+// reaction backfill. Paginated 100/page; `maxPages` bounds runaway crawls on
+// viral messages. Custom emoji are addressed as name:id, unicode by the
+// character itself.
+export async function listReactionUsers(
+  channelId: string,
+  messageId: string,
+  emoji: { id: string | null; name: string },
+  maxPages = 3
+): Promise<Array<{ id: string; bot?: boolean }>> {
+  const ident = encodeURIComponent(
+    emoji.id ? `${emoji.name}:${emoji.id}` : emoji.name
+  );
+  const users: Array<{ id: string; bot?: boolean }> = [];
+  let after: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const params = new URLSearchParams({ limit: "100" });
+    if (after) params.set("after", after);
+    const res = await discordFetch(
+      `${BASE}/channels/${channelId}/messages/${messageId}/reactions/${ident}?${params.toString()}`,
+      { headers: headers() }
+    );
+    if (res.status === 404) return users; // message or emoji gone — fine
+    if (!res.ok) {
+      throw new Error(`discord reactions ${res.status}: ${await res.text()}`);
+    }
+    const batch = (await res.json()) as Array<{ id: string; bot?: boolean }>;
+    users.push(...batch);
+    if (batch.length < 100) break;
+    after = batch[batch.length - 1].id;
+  }
+  return users;
+}
+
+// Live headline counts for the stats page. with_counts=true makes Discord
+// include approximate member/presence totals on the guild object.
+export async function getGuildCounts(
+  guildId: string
+): Promise<{ memberCount: number | null; onlineCount: number | null }> {
+  const res = await discordFetch(`${BASE}/guilds/${guildId}?with_counts=true`, {
+    headers: headers(),
+  });
+  if (!res.ok) throw new Error(`discord guild counts ${res.status}: ${await res.text()}`);
+  const g = (await res.json()) as {
+    approximate_member_count?: number;
+    approximate_presence_count?: number;
+  };
+  return {
+    memberCount: g.approximate_member_count ?? null,
+    onlineCount: g.approximate_presence_count ?? null,
+  };
+}
+
 // Pinned messages for a channel. Discord caps this at 50 per channel and
 // returns them newest-pin first; we reverse so the export reads chronologically
 // like listMessages does.

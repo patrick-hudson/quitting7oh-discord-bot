@@ -25,6 +25,8 @@ import { runRestoreWorker } from "./restore-worker";
 import { runSnapshotWorker } from "./snapshot-worker";
 import { runLeaderboardWorker } from "./leaderboard-worker";
 import { runAiReviewWorker } from "./ai-review-worker";
+import { runStatsWorker } from "./stats-worker";
+import { runReactionBackfill } from "./reaction-backfill";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -49,12 +51,21 @@ async function main() {
       // stores counts only — message text is persisted ONLY when a message
       // is deleted (see src/bot/mod-log.ts).
       GatewayIntentBits.MessageContent,
+      // Reaction add events feed ReactionEvent for the stats page.
+      GatewayIntentBits.GuildMessageReactions,
     ],
     // Without the GuildMember partial, discord.js silently drops
     // GuildMemberRemove for members that weren't cached — which is most of
     // them, since we never chunk the member list. The Message partial lets
     // MessageDelete fire for uncached messages (logged without content).
-    partials: [Partials.GuildMember, Partials.Message],
+    // Reaction/User partials do the same for reactions on uncached messages —
+    // without them, reaction logging would only see recently-sent messages.
+    partials: [
+      Partials.GuildMember,
+      Partials.Message,
+      Partials.Reaction,
+      Partials.User,
+    ],
     // Cache recent messages so deleted ones can be logged with content.
     // 200/channel with a 6h sweep bounds memory while covering the window
     // where deletions actually happen.
@@ -99,6 +110,32 @@ async function main() {
       });
   });
 
+  // Reaction logging for the stats page — same fire-and-forget model. The
+  // unique constraint absorbs remove/re-add cycles and gateway redeliveries
+  // (P2002 = already counted). Removals are deliberately not mirrored.
+  client.on(Events.MessageReactionAdd, (reaction, user) => {
+    const guildId = reaction.message.guildId;
+    if (!guildId) return;
+    prisma.reactionEvent
+      .create({
+        data: {
+          guildId,
+          channelId: reaction.message.channelId,
+          messageId: reaction.message.id,
+          reactorId: user.id,
+          emoji: reaction.emoji.name ?? reaction.emoji.id ?? "?",
+          // On partial users `bot` can be undefined; treat unknown as human.
+          isBot: user.bot ?? false,
+        },
+      })
+      .catch((err: unknown) => {
+        const code = (err as { code?: string } | null)?.code;
+        if (code !== "P2002") {
+          console.warn("[bot] reaction log failed:", err);
+        }
+      });
+  });
+
   client.once(Events.ClientReady, async (c) => {
     console.log(`[bot] logged in as ${c.user.tag} (${c.user.id})`);
     // Upsert all known guilds on startup so the portal has them right away.
@@ -117,6 +154,8 @@ async function main() {
     runSnapshotWorker();
     runLeaderboardWorker();
     runAiReviewWorker(client);
+    runStatsWorker();
+    runReactionBackfill();
   });
 
   client.on(Events.GuildCreate, async (g) => {

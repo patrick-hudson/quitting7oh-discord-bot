@@ -72,6 +72,24 @@ services:
     volumes:
       - archive_data:/data/archive
     command: npm run bot:prod
+
+  # OPTIONAL: split the stats computation into its own container if the bot
+  # ever needs the headroom (the aggregates run inside Postgres, so this is
+  # rarely necessary). To enable: uncomment this service AND set
+  # STATS_REFRESH_MINUTES=0 in the bot service's environment so the two don't
+  # double-compute.
+  # stats-worker:
+  #   image: ${BOT_IMAGE:-ghcr.io/patrick-hudson/quitting7oh-discord-bot:latest}
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   environment:
+  #     DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/quitting7oh?schema=public
+  #     STATS_REFRESH_MINUTES: "60"
+  #   depends_on:
+  #     migrate:
+  #       condition: service_completed_successfully
+  #   command: npx tsx src/bot/stats-standalone.ts
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped
