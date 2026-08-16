@@ -3,12 +3,14 @@
 // Client pieces of the Reddit leaderboard page:
 //   - RedditLeaderboardConfig: monitored-subreddits editor (PATCH
 //     /reddit-leaderboard).
-//   - RedditLeaderboardTable: contributor table with an activity ⇄ karma
-//     ranking toggle, per-row "Mod review" (queues a platform=reddit AI
-//     review) and Discord identity linking (PUT/DELETE /link).
-// Rows come precomputed from the server component; ranking re-sorts locally.
+//   - RedditLeaderboardTable: contributor table with sortable columns and a
+//     filter bar (username search, recency, minimum activity), per-row
+//     "Mod review" (queues a platform=reddit AI review) and Discord identity
+//     linking (PUT/DELETE /link).
+// Rows come precomputed from the server component (top 250 by activity);
+// all sorting/filtering happens locally on that set.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { SubredditListEditor } from "@/components/SubredditListEditor";
 import { LocalTime } from "@/components/LocalTime";
@@ -80,7 +82,25 @@ export function RedditLeaderboardConfig({
   );
 }
 
-type RankMode = "activity" | "karma";
+type SortKey =
+  | "author"
+  | "posts"
+  | "comments"
+  | "total"
+  | "karma"
+  | "avgScore"
+  | "activeDays"
+  | "lastSeen";
+
+// 0 = any time; otherwise "last seen within N days".
+const ACTIVE_WINDOWS = [0, 7, 30, 90] as const;
+type ActiveWindow = (typeof ACTIVE_WINDOWS)[number];
+
+function sortValue(r: RedditLeaderboardRow, key: SortKey): number | string {
+  if (key === "author") return r.author.toLowerCase();
+  if (key === "lastSeen") return Date.parse(r.lastSeen);
+  return r[key];
+}
 
 export function RedditLeaderboardTable({
   guildId,
@@ -92,14 +112,69 @@ export function RedditLeaderboardTable({
   links: Record<string, string>; // reddit username (lower) → discord user id
 }) {
   const router = useRouter();
-  const [mode, setMode] = useState<RankMode>("activity");
+  const [sortKey, setSortKey] = useState<SortKey>("total");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [query, setQuery] = useState("");
+  const [activeWithin, setActiveWithin] = useState<ActiveWindow>(0);
+  const [minPosts, setMinPosts] = useState("");
+  const [minComments, setMinComments] = useState("");
+  const [linkedOnly, setLinkedOnly] = useState(false);
   const [busy, setBusy] = useState<string | null>(null); // author being acted on
   const [linking, setLinking] = useState<string | null>(null);
   const [linkDraft, setLinkDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const sorted = [...rows].sort((a, b) =>
-    mode === "activity" ? b.total - a.total : b.karma - a.karma
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "desc" ? "asc" : "desc"));
+    } else {
+      setSortKey(key);
+      // Text reads naturally ascending; everything else starts biggest-first.
+      setSortDir(key === "author" ? "asc" : "desc");
+    }
+  }
+
+  const sorted = useMemo(() => {
+    const q = query.trim().toLowerCase().replace(/^u\//, "");
+    const posts = Number(minPosts) || 0;
+    const comments = Number(minComments) || 0;
+    // Date.now() only matters once a recency filter is picked (a user action,
+    // so this never runs during hydration).
+    const cutoff = activeWithin ? Date.now() - activeWithin * 86_400_000 : 0;
+    const filtered = rows.filter(
+      (r) =>
+        (!q || r.author.toLowerCase().includes(q)) &&
+        r.posts >= posts &&
+        r.comments >= comments &&
+        (!cutoff || Date.parse(r.lastSeen) >= cutoff) &&
+        (!linkedOnly || links[r.author.toLowerCase()] !== undefined)
+    );
+    const dir = sortDir === "asc" ? 1 : -1;
+    return filtered.sort((a, b) => {
+      const av = sortValue(a, sortKey);
+      const bv = sortValue(b, sortKey);
+      if (av < bv) return -dir;
+      if (av > bv) return dir;
+      return b.total - a.total; // stable, meaningful tiebreak
+    });
+  }, [rows, links, query, minPosts, minComments, activeWithin, linkedOnly, sortKey, sortDir]);
+
+  const sortableHeader = (key: SortKey, label: string, align: "left" | "right") => (
+    <th className={`px-3 py-2 ${align === "right" ? "text-right" : ""}`}>
+      <button
+        type="button"
+        onClick={() => toggleSort(key)}
+        className={`inline-flex items-center gap-0.5 uppercase tracking-wide hover:text-white/80 ${
+          sortKey === key ? "text-white/85" : ""
+        }`}
+        title={`Sort by ${label.toLowerCase()}`}
+      >
+        {label}
+        <span className="w-2.5 text-[9px]">
+          {sortKey === key ? (sortDir === "desc" ? "▼" : "▲") : ""}
+        </span>
+      </button>
+    </th>
   );
 
   async function review(author: string) {
@@ -173,41 +248,87 @@ export function RedditLeaderboardTable({
 
   return (
     <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-xs text-white/40">
-          Karma uses settled scores (re-read once content is 6h+ old). Linked
-          rows include the member&apos;s Discord history in reddit AI reviews.
-        </p>
-        <div className="flex shrink-0 gap-1">
-          {(["activity", "karma"] as RankMode[]).map((m) => (
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search u/username…"
+          className="w-44 rounded-lg bg-black/30 px-2.5 py-1.5 text-xs text-white/90 ring-1 ring-white/10 placeholder:text-white/30 focus:outline-none focus:ring-white/25"
+        />
+        <div className="flex gap-1">
+          {ACTIVE_WINDOWS.map((w) => (
             <button
-              key={m}
+              key={w}
               type="button"
-              onClick={() => setMode(m)}
-              className={`rounded-md px-2.5 py-1 text-xs ring-1 transition ${
-                mode === m
+              onClick={() => setActiveWithin(w)}
+              className={`rounded-md px-2 py-1 text-xs ring-1 transition ${
+                activeWithin === w
                   ? "bg-white/10 text-white/90 ring-white/20"
                   : "text-white/50 ring-white/10 hover:bg-white/5"
               }`}
             >
-              Rank by {m}
+              {w === 0 ? "Any time" : `Active ${w}d`}
             </button>
           ))}
         </div>
+        <label className="flex items-center gap-1 text-xs text-white/45">
+          ≥
+          <input
+            value={minPosts}
+            onChange={(e) => setMinPosts(e.target.value.replace(/\D/g, ""))}
+            placeholder="0"
+            inputMode="numeric"
+            className="w-12 rounded-md bg-black/30 px-1.5 py-1 text-center tabular-nums text-white/90 ring-1 ring-white/10 placeholder:text-white/25 focus:outline-none"
+          />
+          posts
+        </label>
+        <label className="flex items-center gap-1 text-xs text-white/45">
+          ≥
+          <input
+            value={minComments}
+            onChange={(e) => setMinComments(e.target.value.replace(/\D/g, ""))}
+            placeholder="0"
+            inputMode="numeric"
+            className="w-12 rounded-md bg-black/30 px-1.5 py-1 text-center tabular-nums text-white/90 ring-1 ring-white/10 placeholder:text-white/25 focus:outline-none"
+          />
+          comments
+        </label>
+        <button
+          type="button"
+          onClick={() => setLinkedOnly((v) => !v)}
+          className={`rounded-md px-2 py-1 text-xs ring-1 transition ${
+            linkedOnly
+              ? "bg-white/10 text-white/90 ring-white/20"
+              : "text-white/50 ring-white/10 hover:bg-white/5"
+          }`}
+        >
+          🔗 Linked only
+        </button>
+        <span className="ml-auto text-xs tabular-nums text-white/40">
+          {sorted.length === rows.length
+            ? `${rows.length} contributors`
+            : `${sorted.length} of ${rows.length} contributors`}
+        </span>
       </div>
+      <p className="mb-2 text-xs text-white/40">
+        Click a column to sort. Karma uses settled scores (re-read once content
+        is 6h+ old). Linked rows include the member&apos;s Discord history in
+        reddit AI reviews.
+      </p>
       {error && <p className="mb-2 text-xs text-red-300">{error}</p>}
       <div className="overflow-x-auto rounded-2xl ring-1 ring-white/10">
-        <table className="w-full min-w-[860px] text-sm">
+        <table className="w-full min-w-[940px] text-sm">
           <thead>
             <tr className="bg-white/[0.03] text-left text-[11px] uppercase tracking-wide text-white/45">
               <th className="px-3 py-2">#</th>
-              <th className="px-3 py-2">Contributor</th>
-              <th className="px-3 py-2 text-right">Posts</th>
-              <th className="px-3 py-2 text-right">Comments</th>
-              <th className="px-3 py-2 text-right">Karma</th>
-              <th className="px-3 py-2 text-right">Avg</th>
-              <th className="px-3 py-2 text-right">Active days</th>
-              <th className="px-3 py-2 text-right">Last seen</th>
+              {sortableHeader("author", "Contributor", "left")}
+              {sortableHeader("posts", "Posts", "right")}
+              {sortableHeader("comments", "Comments", "right")}
+              {sortableHeader("total", "Total", "right")}
+              {sortableHeader("karma", "Karma", "right")}
+              {sortableHeader("avgScore", "Avg", "right")}
+              {sortableHeader("activeDays", "Active days", "right")}
+              {sortableHeader("lastSeen", "Last seen", "right")}
               <th className="px-3 py-2 text-right">Actions</th>
             </tr>
           </thead>
@@ -240,6 +361,9 @@ export function RedditLeaderboardTable({
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-white/70">
                     {r.comments.toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-white/70">
+                    {r.total.toLocaleString()}
                   </td>
                   <td className="px-3 py-2 text-right tabular-nums text-white/85">
                     {r.karma.toLocaleString()}

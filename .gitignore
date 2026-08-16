@@ -10,3 +10,4 @@ next-env.d.ts
 corp-chain.pem
 *.tsbuildinfo
 archive-data/
+drafts/
