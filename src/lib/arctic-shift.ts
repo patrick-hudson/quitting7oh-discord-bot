@@ -137,6 +137,9 @@ export async function fetchArcticComments(
         : postId
           ? `${PUBLIC_BASE}/r/${subreddit}/comments/${postId}/_/${d.id}/`
           : `${PUBLIC_BASE}/r/${subreddit}`,
+      postUrl: postId
+        ? `${PUBLIC_BASE}/r/${subreddit}/comments/${postId}/`
+        : `${PUBLIC_BASE}/r/${subreddit}`,
       postTitle: "", // the archive's comment records don't carry the post title
       createdAt: d.created_utc ? new Date(d.created_utc * 1000) : new Date(0),
       score: d.score ?? 0,

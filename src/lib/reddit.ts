@@ -167,10 +167,18 @@ export type RedditComment = {
   author: string;
   body: string; // markdown source, as written
   permalink: string; // full URL to the comment
+  postUrl: string; // full URL to the parent thread (the post)
   postTitle: string; // title of the post the comment is on
   createdAt: Date;
   score: number; // at fetch time; see refreshMaturingScores
 };
+
+// A comment permalink is /r/<sub>/comments/<postid>/<slug>/<commentid>/ —
+// dropping the trailing comment id yields the thread URL.
+export function threadUrlFromCommentPermalink(permalink: string): string {
+  const m = permalink.match(/^(.*\/comments\/[^/]+\/[^/]+\/)[^/]+\/?$/);
+  return m ? m[1] : permalink;
+}
 
 // Newest comments across the whole subreddit (all threads), newest-first.
 // OAuth-only — callers gate on redditOauthEnabled().
@@ -183,11 +191,15 @@ export async function fetchNewComments(subreddit: string): Promise<RedditComment
   for (const c of children) {
     const d = c.data;
     if (!d?.id) continue;
+    const permalink = d.permalink
+      ? `${PUBLIC_BASE}${d.permalink}`
+      : `${PUBLIC_BASE}/r/${subreddit}`;
     out.push({
       id: d.id,
       author: d.author || "[deleted]",
       body: (d.body ?? "").trim(),
-      permalink: d.permalink ? `${PUBLIC_BASE}${d.permalink}` : `${PUBLIC_BASE}/r/${subreddit}`,
+      permalink,
+      postUrl: d.link_permalink ?? threadUrlFromCommentPermalink(permalink),
       postTitle: d.link_title ?? "",
       createdAt: d.created_utc ? new Date(d.created_utc * 1000) : new Date(),
       score: d.score ?? 0,
@@ -206,6 +218,7 @@ type RedditListingChild = {
   selftext?: string; // posts
   body?: string; // comments
   link_title?: string; // comments: the parent post's title
+  link_permalink?: string; // comments: full URL of the parent post
 };
 
 // Current scores for up to 100 things per call (t3_/t1_ fullnames) via

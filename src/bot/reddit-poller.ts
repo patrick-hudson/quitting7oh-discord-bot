@@ -356,7 +356,10 @@ async function firehose(
         .setAuthor({ name: `u/${c.author} · r/${subreddit}` })
         .setTitle(truncate(`💬 ${c.postTitle || "comment"}`, 256))
         .setURL(c.permalink)
-        .setDescription(truncate(c.body || "(empty)", 1000))
+        .setDescription(
+          truncate(c.body || "(empty)", 1000) +
+            `\n\n[Jump to comment](${c.permalink}) · [Full thread](${c.postUrl})`
+        )
         .setTimestamp(c.createdAt)
         .setFooter({ text: "reddit comment" })
     );
