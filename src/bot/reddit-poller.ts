@@ -337,8 +337,25 @@ async function announce(
   await channel.send({ embeds: [embed] });
 }
 
-// Comments are high-volume, so they batch up to Discord's 10-embeds-per-
-// message limit — a busy tick sends a handful of messages instead of dozens.
+// Discord caps a message at 10 embeds AND 6000 characters across all of its
+// embeds combined. A firehose embed can run ~1400 chars (title + body +
+// links line), so batches pack by measured size, not a fixed count.
+const EMBED_BATCH_BUDGET = 5700; // headroom under the 6000 combined cap
+
+// The characters Discord counts toward the combined limit (URLs and
+// timestamps don't count).
+function embedChars(e: EmbedBuilder): number {
+  const d = e.data;
+  return (
+    (d.title?.length ?? 0) +
+    (d.description?.length ?? 0) +
+    (d.author?.name?.length ?? 0) +
+    (d.footer?.text?.length ?? 0)
+  );
+}
+
+// Comments are high-volume, so they batch — a busy tick sends a handful of
+// messages instead of dozens.
 async function firehose(
   client: Client,
   channelId: string,
@@ -349,22 +366,30 @@ async function firehose(
   if (!channel || !channel.isTextBased() || !("send" in channel)) {
     throw new Error(`channel ${channelId} not a sendable text channel`);
   }
-  for (let i = 0; i < comments.length; i += 10) {
-    const embeds = comments.slice(i, i + 10).map((c) =>
-      new EmbedBuilder()
-        .setColor(COMMENT_GREY)
-        .setAuthor({ name: `u/${c.author} · r/${subreddit}` })
-        .setTitle(truncate(`💬 ${c.postTitle || "comment"}`, 256))
-        .setURL(c.permalink)
-        .setDescription(
-          truncate(c.body || "(empty)", 1000) +
-            `\n\n[Jump to comment](${c.permalink}) · [Full thread](${c.postUrl})`
-        )
-        .setTimestamp(c.createdAt)
-        .setFooter({ text: "reddit comment" })
-    );
-    await channel.send({ embeds });
+  let batch: EmbedBuilder[] = [];
+  let batchSize = 0;
+  for (const c of comments) {
+    const embed = new EmbedBuilder()
+      .setColor(COMMENT_GREY)
+      .setAuthor({ name: `u/${c.author} · r/${subreddit}` })
+      .setTitle(truncate(`💬 ${c.postTitle || "comment"}`, 256))
+      .setURL(c.permalink)
+      .setDescription(
+        truncate(c.body || "(empty)", 1000) +
+          `\n\n[Jump to comment](${c.permalink}) · [Full thread](${c.postUrl})`
+      )
+      .setTimestamp(c.createdAt)
+      .setFooter({ text: "reddit comment" });
+    const size = embedChars(embed);
+    if (batch.length > 0 && (batch.length >= 10 || batchSize + size > EMBED_BATCH_BUDGET)) {
+      await channel.send({ embeds: batch });
+      batch = [];
+      batchSize = 0;
+    }
+    batch.push(embed);
+    batchSize += size;
   }
+  if (batch.length > 0) await channel.send({ embeds: batch });
 }
 
 function truncate(s: string, max: number): string {
