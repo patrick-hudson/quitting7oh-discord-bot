@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars, fill privately, and never commit the completed file.
+# Empty values intentionally fail validation until operator inputs are supplied.
+aws_region          = ""
+availability_zone   = ""
+allowed_account_ids = []
+instance_name       = ""
+key_pair_name       = ""
+ssh_allowed_cidrs   = []
+ssh_public_key_path = ""
+app_domain          = ""
+
+# Obtain full immutable image digests from the running release.
+app_image      = ""
+postgres_image = ""
+caddy_image    = ""
+
+# Optional: choose 4 GiB instead of the default 2 GiB.
+# bundle_id = "medium_3_0"
+# snapshot_time = "08:00"

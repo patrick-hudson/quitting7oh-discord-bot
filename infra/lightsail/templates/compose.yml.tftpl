@@ -1,0 +1,82 @@
+name: quitting7oh-bot
+
+services:
+  postgres:
+    image: ${postgres_image}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: $${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: quitting7oh
+    volumes:
+      - /mnt/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d quitting7oh"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Explicit maintenance only. Do not run during a same-release DB restore.
+  migrate:
+    profiles: ["maintenance"]
+    image: ${app_image}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:$${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/quitting7oh?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: npx prisma db push --skip-generate
+    restart: "no"
+
+  # Default `up -d` starts only Postgres. Explicitly select each live service.
+  web:
+    profiles: ["live"]
+    image: ${app_image}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:$${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/quitting7oh?schema=public
+      ARCHIVE_DIR: /data/archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - archive_data:/data/archive:ro
+    command: npm run start
+
+  bot:
+    profiles: ["live"]
+    image: ${app_image}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://postgres:$${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@postgres:5432/quitting7oh?schema=public
+      ARCHIVE_DIR: /data/archive
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - archive_data:/data/archive
+    command: npm run bot:prod
+
+  caddy:
+    profiles: ["live"]
+    image: ${caddy_image}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  archive_data:
+  caddy_data:
+  caddy_config:

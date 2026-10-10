@@ -1,5 +1,10 @@
 # Moving to AWS Lightsail
 
+For current provisioning and same-release migration, use the
+[Terraform module and runbook](infra/lightsail/README.md). The
+[migration record](infra/lightsail/MIGRATION.md) documents measured memory usage
+and verified cutover results. The guide below covers initial setup.
+
 This document covers everything you need to do to take what's running locally and put it on a Lightsail instance for real users. It assumes the local `docker compose up` flow in the README works for you.
 
 ---

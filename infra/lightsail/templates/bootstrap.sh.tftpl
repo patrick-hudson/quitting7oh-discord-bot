@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# Add the supplied public key without replacing Lightsail's authorized keys.
+install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+touch /home/ubuntu/.ssh/authorized_keys
+public_key=$(printf '%s' '${public_key_base64}' | base64 --decode)
+if ! grep -qxF "$public_key" /home/ubuntu/.ssh/authorized_keys; then
+  printf '\n%s\n' "$public_key" >> /home/ubuntu/.ssh/authorized_keys
+fi
+chown ubuntu:ubuntu /home/ubuntu/.ssh/authorized_keys
+chmod 600 /home/ubuntu/.ssh/authorized_keys
+
+apt-get update
+apt-get install -y ca-certificates curl rsync
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\n' "$(dpkg --print-architecture)" > /etc/apt/sources.list.d/docker.list
+apt-get update
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+systemctl enable --now docker
+usermod -aG docker ubuntu
+
+# A fresh 60 GB root disk holds the DB, Docker archive volume and OS together.
+# No existing disk is attached, formatted or copied by this script.
+install -d -m 700 /mnt/pgdata
+install -d -m 750 -o ubuntu -g ubuntu '${app_directory}'
+printf '%s' '${compose_base64}' | base64 --decode > '${app_directory}/compose.yml'
+printf '%s' '${caddyfile_base64}' | base64 --decode > '${app_directory}/Caddyfile'
+chown ubuntu:ubuntu '${app_directory}/compose.yml' '${app_directory}/Caddyfile'
+chmod 640 '${app_directory}/compose.yml' '${app_directory}/Caddyfile'
+
+# Swap is burst protection, not extra steady-state RAM.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile
+fi
+if ! swapon --show=NAME --noheadings | grep -qxF /swapfile; then
+  swapon /swapfile
+fi
+if ! grep -qE '^/swapfile[[:space:]]' /etc/fstab; then
+  printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+fi
+printf 'vm.swappiness=10\n' > /etc/sysctl.d/90-quitting7oh-swap.conf
+sysctl -p /etc/sysctl.d/90-quitting7oh-swap.conf
+
+# Limit future container logs; leave image cleanup an explicit operator action.
+install -d -m 755 /etc/docker
+cat > /etc/docker/daemon.json <<'JSON'
+{"log-driver":"local","log-opts":{"max-size":"10m","max-file":"3"}}
+JSON
+systemctl restart docker
+
+# Readiness records host preparation only. No .env, image pull, DB initialization,
+# schema push, bot login or DNS update happens here.
+touch '${app_directory}/HOST_READY'
+chown ubuntu:ubuntu '${app_directory}/HOST_READY'
