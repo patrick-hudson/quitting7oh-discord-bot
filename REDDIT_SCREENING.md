@@ -131,8 +131,11 @@ for comments. Without the OAuth reader only posts are collected and screened.
 
 Models: `AI_SCREEN_MODEL` (item screen) and `AI_SCREEN_ASSESS_MODEL`
 (assessment). They default to `AI_REVIEW_MAP_MODEL` and `AI_REVIEW_MODEL`.
-The calls use `tool_choice: "auto"`, so newer models that reject forced tool
-use work as well.
+Any Claude model works. Calls go through
+[src/lib/claude-tool-call.ts](src/lib/claude-tool-call.ts), which uses
+`tool_choice: "auto"` (Sonnet 5.5 and Opus 5.5 reject forced tool use) and
+sends an effort level only to models that accept one: low for the item
+screen, high for assessments.
 
 ## Cost
 

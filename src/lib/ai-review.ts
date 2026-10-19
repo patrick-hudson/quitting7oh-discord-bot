@@ -18,6 +18,7 @@ import readline from "node:readline";
 import path from "node:path";
 import { env } from "@/lib/env";
 import { prisma } from "@/lib/db";
+import { callTool } from "@/lib/claude-tool-call";
 import { archiveDir } from "@/bot/archive-worker";
 import {
   listTextChannels,
@@ -356,7 +357,8 @@ export async function generateReview(
         system: input.systemPrompt,
         user,
         tool: VERDICT_TOOL,
-        maxTokens: 3200,
+        maxTokens: 16000, // room for thinking on current models
+        effort: "high",
       });
       verdict = normalizeVerdict(res.input);
       inputTokens += res.inputTokens;
@@ -388,7 +390,8 @@ export async function generateReview(
           i
         ].join("\n")}`,
         tool: SIGNALS_TOOL,
-        maxTokens: 1200,
+        maxTokens: 8000,
+        effort: "low",
       });
       inputTokens += res.inputTokens;
       outputTokens += res.outputTokens;
@@ -402,7 +405,8 @@ export async function generateReview(
       system: input.systemPrompt,
       user,
       tool: VERDICT_TOOL,
-      maxTokens: 3200,
+      maxTokens: 16000,
+      effort: "high",
     });
     verdict = normalizeVerdict(res.input);
     inputTokens += res.inputTokens;
@@ -687,35 +691,6 @@ function isPromptTooLongError(err: unknown): boolean {
     err instanceof Anthropic.BadRequestError &&
     /prompt is too long/i.test(err.message)
   );
-}
-
-async function callTool(
-  client: Anthropic,
-  args: {
-    model: string;
-    system: string;
-    user: string;
-    tool: Anthropic.Tool;
-    maxTokens: number;
-  }
-): Promise<{ input: unknown; inputTokens: number; outputTokens: number }> {
-  const res = await client.messages.create({
-    model: args.model,
-    max_tokens: args.maxTokens,
-    system: args.system,
-    tools: [args.tool],
-    tool_choice: { type: "tool", name: args.tool.name },
-    messages: [{ role: "user", content: args.user }],
-  });
-  const block = res.content.find((b) => b.type === "tool_use");
-  if (!block || block.type !== "tool_use") {
-    throw new Error(`Model returned no ${args.tool.name} tool call`);
-  }
-  return {
-    input: block.input,
-    inputTokens: res.usage.input_tokens,
-    outputTokens: res.usage.output_tokens,
-  };
 }
 
 // Fields are typed loose on purpose — this is unvalidated model output. The

@@ -10,12 +10,14 @@
 //      ban / warn / support / no_action, with evidence and a draft message.
 //
 // The worker (src/bot/reddit-screen-worker.ts) owns scheduling + storage.
-//
-// Tool calls use tool_choice "auto" plus an explicit instruction rather than a
-// forced tool_choice: newer models (Sonnet 5.5, Opus 5.5) reject forced
-// tool use, and this keeps AI_REVIEW_MODEL / AI_REVIEW_MAP_MODEL swappable.
+// Model calls go through src/lib/claude-tool-call.ts, which keeps them
+// working on any configured model generation.
 
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { callTool, ToolCallRefusalError } from "@/lib/claude-tool-call";
+
+// Kept under the screen's own name for the worker and calibration script.
+export { ToolCallRefusalError as ScreenRefusalError };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -243,7 +245,10 @@ export async function classifyItems(
     system: withNotes(ITEM_RUBRIC, args.notes),
     user: `Label these ${args.items.length} items.\n\n${lines.join("\n\n")}`,
     tool: LABELS_TOOL,
-    maxTokens: Math.min(16000, 400 + args.items.length * 220),
+    // Generous: current models think first, and thinking counts toward the
+    // cap. Only tokens actually generated are billed.
+    maxTokens: 16000,
+    effort: "low",
   });
 
   const results = new Map<string, ScreenItemResult>();
@@ -309,7 +314,8 @@ export async function assessUser(
       truncated ? `; the newest ${lines.length} are shown` : ""
     }.\n\n<history>\n${lines.join("\n")}\n</history>`,
     tool: ASSESS_TOOL,
-    maxTokens: 4000,
+    maxTokens: 16000,
+    effort: "high", // this is the ban/no-ban judgment
   });
   return {
     verdict: normalizeVerdict(res.input),
@@ -350,50 +356,8 @@ function normalizeVerdict(raw: unknown): ScreenVerdict {
 }
 
 // ---------------------------------------------------------------------------
-// Model plumbing
+// Helpers
 // ---------------------------------------------------------------------------
-
-export class ScreenRefusalError extends Error {
-  constructor(detail: string) {
-    super(`Model declined the request${detail ? `: ${detail}` : ""}`);
-    this.name = "ScreenRefusalError";
-  }
-}
-
-// One tool call with tool_choice auto. If the model answers in prose instead,
-// ask once more with the instruction repeated; a second miss throws.
-async function callTool(
-  client: Anthropic,
-  args: { model: string; system: string; user: string; tool: Anthropic.Tool; maxTokens: number }
-): Promise<{ input: unknown } & Usage> {
-  const messages: Anthropic.MessageParam[] = [{ role: "user", content: args.user }];
-  let inputTokens = 0;
-  let outputTokens = 0;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await client.messages.create({
-      model: args.model,
-      max_tokens: args.maxTokens,
-      system: args.system,
-      tools: [args.tool],
-      tool_choice: { type: "auto" },
-      messages,
-    });
-    inputTokens += res.usage.input_tokens;
-    outputTokens += res.usage.output_tokens;
-    if (res.stop_reason === "refusal") {
-      throw new ScreenRefusalError(res.stop_details?.explanation ?? "");
-    }
-    const block = res.content.find((b) => b.type === "tool_use");
-    if (block && block.type === "tool_use") {
-      return { input: block.input, inputTokens, outputTokens };
-    }
-    messages.push(
-      { role: "assistant", content: res.content },
-      { role: "user", content: `Submit your answer by calling the ${args.tool.name} tool.` }
-    );
-  }
-  throw new Error(`Model returned no ${args.tool.name} tool call`);
-}
 
 function conf(v: unknown): Confidence {
   return v === "low" || v === "medium" || v === "high" ? v : "low";
