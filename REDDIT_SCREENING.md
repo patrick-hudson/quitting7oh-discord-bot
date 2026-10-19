@@ -68,6 +68,50 @@ Each queued user gets these buttons on the portal page:
 If a dismissed or watched user picks up a new sourcing or promotion flag, they
 go back to the open queue. Banned users are never re-assessed.
 
+## Calibrate first
+
+Before you turn the screen on, check its labels against your sub's real
+content. [scripts/preview-reddit-screen.ts](scripts/preview-reddit-screen.ts)
+runs the item screen over the newest collected posts and comments and prints
+what it would label them. It writes nothing, so nothing gets queued, and the
+worker still screens those items when you enable it.
+
+The script only reads content that's already collected. A sub on the
+screening list isn't collected until the screen is on. To calibrate first,
+add the sub to the leaderboard's monitored subreddits, then let the poller
+and backfill run.
+
+```sh
+# Dry run: shows the item count and estimated cost. Makes no API calls.
+npx tsx scripts/preview-reddit-screen.ts <guildId> quittingcatsclaw --limit 100
+
+# Classify for real (costs money; ~100 items on the default model is cents).
+npx tsx scripts/preview-reddit-screen.ts <guildId> quittingcatsclaw --limit 100 --yes
+
+# Try draft notes without saving them in the portal.
+npx tsx scripts/preview-reddit-screen.ts <guildId> quittingcatsclaw --yes \
+  --notes "Plain-leaf taper questions are allowed here."
+```
+
+Run it where the bot runs (same `DATABASE_URL`, `ANTHROPIC_API_KEY`, and
+`AI_SCREEN_MODEL`). Without `--notes` it uses the guild's saved notes, and
+`--notes ""` runs with none.
+
+Flagged rows print first, each with the model's reason. The rows to check:
+
+- **⚠** marks a flagged item whose author shows recovery intent. Most false
+  positives you need to catch show up here, like a member in withdrawal who
+  names the shop they relapsed at and gets labeled `sourcing`.
+- **!!** marks a possible crisis signal.
+- `stored label was:` appears when the worker already screened the item and
+  labeled it differently. Use it to compare a notes change against the
+  current labels.
+
+After the table it prints label counts, how many items would queue a user,
+and the actual token usage and cost. If struggling members keep getting
+flagged, put the pattern in plain words in `--notes` and re-run until the
+labels look right. Then save those notes in the portal and enable the screen.
+
 ## Configure
 
 Open **Reddit screening** in the portal sidebar, under Members:
