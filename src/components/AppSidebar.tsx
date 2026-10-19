@@ -27,6 +27,7 @@ import {
   ScrollText,
   Settings,
   Shield,
+  ShieldAlert,
 } from "lucide-react";
 
 import {
@@ -97,6 +98,7 @@ export function AppSidebar({
       items: [
         { href: `${base}/leaderboard`, label: "Leaderboard", icon: Trophy },
         { href: `${base}/reddit-leaderboard`, label: "Reddit leaderboard", icon: Flame },
+        { href: `${base}/reddit-screening`, label: "Reddit screening", icon: ShieldAlert },
         { href: `${base}/milestones`, label: "Milestones", icon: Award },
         { href: `${base}/milestones/advanced`, label: "Bulk-edit templates", icon: Layers },
         { href: `${base}/ai-review`, label: "AI reviews", icon: Sparkles },

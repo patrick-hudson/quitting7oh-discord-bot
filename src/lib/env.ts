@@ -45,5 +45,13 @@ export const env = {
   aiReviewMaxMessages(): number {
     return Number(process.env.AI_REVIEW_MAX_MESSAGES ?? "60000");
   },
+  // Reddit sourcing screen: per-item classifier (high volume, cheap) and the
+  // whole-history user assessment. Default to the fit reviewer's pair.
+  aiScreenModel(): string {
+    return process.env.AI_SCREEN_MODEL || env.aiReviewMapModel();
+  },
+  aiScreenAssessModel(): string {
+    return process.env.AI_SCREEN_ASSESS_MODEL || env.aiReviewModel();
+  },
   required,
 };

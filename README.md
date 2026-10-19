@@ -30,6 +30,7 @@ Posts can skip a scheduled fire when the channel hasn't moved since the last one
 | Milestones | Self-claim recovery milestone roles from a button message (24h through 2+ years). Role auto-creation with color themes, congrats posts, quiet reset. Section below. |
 | Bulk-edit templates | Congrats/ephemeral template rosters per tier. |
 | AI reviews | Claude-backed contributor-fit reviews of a member's message history. Single, batch, report, and share views. Section below. |
+| Reddit screening | Claude screens every new post and comment in chosen subreddits for sourcing and promotion, kept separate from members struggling to quit. Flagged users get a whole-history ban / warn / support assessment with evidence links and a draft message; a mod decides. [REDDIT_SCREENING.md](REDDIT_SCREENING.md). |
 
 The bot also DMs a welcome message on join (roster-based, skips closed DMs) and announces departures to a channel (`{user}`, `{count}`, `{profile}` placeholders; fires the same for leaves, kicks, and bans because Discord's gateway doesn't distinguish).
 
@@ -67,6 +68,7 @@ All run inside the bot process. Each polls the DB on its own cadence; none block
 | `restore-worker` | poll | Non-destructive rebuild from a snapshot |
 | `leaderboard-worker` | 6h | Recompute the contributor leaderboard cache |
 | `ai-review-worker` | 15s | Run queued AI fit reviews, one at a time |
+| `reddit-screen-worker` | 60s | Label new reddit items for sourcing, assess flagged users, alert mods |
 | `stats-worker` | 60m | Recompute the server-stats cache |
 | `reaction-backfill` | 5m | One-time crawl of archived messages to recover historical reactions |
 | `leave-announcer`, `welcome-dm`, `mod-log`, `milestones` | event-driven | Gateway listeners |
@@ -79,6 +81,7 @@ The stats worker is gateway-free and can move to its own container if the bot ev
 - [KA_MEETINGS.md](KA_MEETINGS.md): the seeded Kratom Anonymous meeting posts + seeder script.
 - [REMINDERS.md](REMINDERS.md): follow-up reminders and the bulk-enable scripts.
 - [REDDIT.md](REDDIT.md): the Reddit announcer.
+- [REDDIT_SCREENING.md](REDDIT_SCREENING.md): the AI sourcing screen for recovery subreddits.
 - [BACKUPS.md](BACKUPS.md): snapshots, diffs, config export/import, message archive, restore assist.
 - [LEAD_TIME.md](LEAD_TIME.md): changing a post's warning lead time (preview/apply scripts).
 - [MIGRATIONS.md](MIGRATIONS.md): schema-change workflow (manual SQL + additive `db push`).

@@ -141,6 +141,16 @@ These write roles and messages in the live server.
 | PUT | `/guilds/{g}/reddit-leaderboard/link` | `{redditUsername, discordUserId}` — mod-confirmed identity link; reddit AI reviews then include the member's Discord history |
 | DELETE | `/guilds/{g}/reddit-leaderboard/link?redditUsername=` | Remove a link |
 
+## Reddit sourcing screen 💸
+
+The bot labels every new screened item and assesses flagged users with Claude; these endpoints configure it and record mod decisions. See [REDDIT_SCREENING.md](REDDIT_SCREENING.md).
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/guilds/{g}/reddit-screening?status=open\|watching\|banned\|dismissed\|all` | `{config, users:[{username, displayName, status, flagCount, lastFlaggedAt, recommendation, confidence, verdict, verdictAt, assessDueAt, …}]}` — newest-flagged first, ≤500 |
+| PATCH | `/guilds/{g}/reddit-screening` | `{enabled, subreddits:[names] (≤10), alertChannelId\|null, notes\|null, lookbackDays (0–90, default 7), applyLookback}` — lookback is applied when the screen is switched on, or when `applyLookback` is true |
+| POST | `/guilds/{g}/reddit-screening/users/{username}` | `{action: "banned"\|"watching"\|"dismissed"\|"open"\|"reassess"}` — records the mod's decision (the ban itself happens on reddit) or queues a fresh assessment |
+
 ## AI reviews 💸
 
 Every review is a real Claude API call (roughly $0.03–$0.75 per member

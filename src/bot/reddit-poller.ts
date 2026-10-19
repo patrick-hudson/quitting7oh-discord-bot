@@ -11,6 +11,8 @@
 //     RedditPost/RedditComment (src/lib/reddit-store.ts) for the Reddit
 //     contributor leaderboard. Independent of redditEnabled; a sub that's
 //     already announced/firehosed is collected from the same fetch.
+//     redditScreenSubreddits (when the sourcing screen is on) are collected
+//     the same way — src/bot/reddit-screen-worker.ts labels what lands.
 //
 // A subreddit on several lists is fetched once per content kind per tick.
 // High-water marks live in Guild.redditLastPostAts, a JSON map: post marks
@@ -64,6 +66,7 @@ async function tick(client: Client) {
         { redditSubreddits: { isEmpty: false } },
         { redditFirehoseSubreddits: { isEmpty: false } },
         { redditLeaderboardSubreddits: { isEmpty: false } },
+        { redditScreenEnabled: true, redditScreenSubreddits: { isEmpty: false } },
         // Legacy single-sub config still waiting to be migrated.
         { redditSubreddit: { not: null } },
       ],
@@ -88,14 +91,16 @@ async function tick(client: Client) {
     // the redditEnabled toggle; collection is independent of it.
     const announced = new Set(g.redditSubreddits.map((x) => x.toLowerCase()));
     const firehosed = new Set(g.redditFirehoseSubreddits.map((x) => x.toLowerCase()));
+    const screened = g.redditScreenEnabled ? g.redditScreenSubreddits : [];
     const monitored = new Set(
-      g.redditLeaderboardSubreddits.map((x) => x.toLowerCase())
+      [...g.redditLeaderboardSubreddits, ...screened].map((x) => x.toLowerCase())
     );
     const union = new Map<string, string>(); // key → display casing
     for (const list of [
       g.redditSubreddits,
       g.redditFirehoseSubreddits,
       g.redditLeaderboardSubreddits,
+      screened,
     ]) {
       for (const sub of list) {
         if (!union.has(sub.toLowerCase())) union.set(sub.toLowerCase(), sub);

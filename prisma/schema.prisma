@@ -91,6 +91,25 @@ model Guild {
   // baked-in DEFAULT_REDDIT_MOD_PROMPT in src/lib/ai-review.ts.
   aiRedditReviewPrompt String? @db.Text
 
+  // AI sourcing screen (src/bot/reddit-screen-worker.ts, REDDIT_SCREENING.md).
+  // Every collected post/comment from redditScreenSubreddits that is newer
+  // than redditScreenSince gets a cheap per-item label (sourcing, promoting
+  // use, taper sourcing, struggling, ok); authors with sourcing/promotion
+  // flags get a whole-history assessment (ban / warn / support / no action)
+  // for a human mod to act on. Never bans anyone itself. Screened subs are
+  // also collected by the poller (like redditLeaderboardSubreddits).
+  redditScreenEnabled        Boolean   @default(false)
+  redditScreenSubreddits     String[]  @default([])
+  // Items created before this are never screened, so turning the screen on
+  // doesn't bill a classifier pass over years of backfilled history. Set
+  // from the lookback chosen when the screen is (re)enabled.
+  redditScreenSince          DateTime?
+  // Optional private mod channel for ban/warn verdicts and crisis signals.
+  redditScreenAlertChannelId String?
+  // Sub-specific rules/vocabulary appended to both screen prompts (e.g.
+  // "plain-leaf taper questions are allowed", local slang for vendors).
+  redditScreenNotes          String?   @db.Text
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -698,6 +717,80 @@ model RedditIdentityLink {
 
   @@unique([guildId, redditUsername])
   @@index([guildId, discordUserId])
+}
+
+// One per screened Reddit item (src/bot/reddit-screen-worker.ts): the cheap
+// per-item classifier's label. Existence = "already screened", so the worker
+// never pays for the same item twice. id is the reddit fullname (t3_/t1_).
+model RedditScreenItem {
+  id            String   @id // "t3_<id>" (post) or "t1_<id>" (comment)
+  guildId       String
+  subreddit     String // lowercased
+  kind          String // "post" | "comment"
+  author        String
+  // sourcing | promoting_use | taper_sourcing | struggling | ok | error
+  label         String
+  confidence    String // low | medium | high
+  // Whether the author shows intent to cut down or quit, independent of the
+  // label — a relapsing member asking where to buy is still "sourcing", but
+  // the user-level assessment weighs them differently.
+  recoveryIntent Boolean @default(false)
+  reason        String   @db.Text
+  evidence      String   @db.Text // short verbatim quote
+  crisis        Boolean  @default(false)
+  crisisNote    String?  @db.Text
+  permalink     String
+  itemCreatedAt DateTime
+  model         String
+  screenedAt    DateTime @default(now())
+
+  @@index([guildId, author])
+  @@index([guildId, label, itemCreatedAt])
+  @@index([guildId, crisis, itemCreatedAt])
+}
+
+// A reddit author the screen has flagged at least once, with the latest
+// whole-history assessment and the mod's decision. The worker assesses any
+// row whose assessDueAt has passed: a new sourcing/promotion flag sets it
+// (no sooner than an hour after the previous verdict, so a user posting ten
+// comments costs one assessment), as does a mod's "re-assess" click.
+model RedditScreenUser {
+  id          String @id @default(cuid())
+  guildId     String
+  username    String // lowercased
+  displayName String // casing as seen on reddit
+
+  // Mod decision: open → banned | watching | dismissed. A dismissed or
+  // watching user is reopened when a NEW sourcing/promotion flag lands after
+  // the decision.
+  status     String    @default("open")
+  decidedBy  String? // Discord id
+  decidedAt  DateTime?
+
+  lastFlaggedAt     DateTime?
+  flagCount         Int       @default(0) // medium+ sourcing/promoting_use/taper_sourcing
+  assessDueAt       DateTime? // null = nothing to (re)assess
+
+  // Latest assessment. verdict = ScreenVerdict in src/lib/reddit-screen.ts.
+  verdict        Json?
+  recommendation String? // ban | warn | support | no_action
+  confidence     String?
+  verdictAt      DateTime?
+  assessError    String?  @db.Text
+  model          String?
+  itemsAnalyzed  Int      @default(0)
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  // Recommendation last posted to the alert channel, so a re-assessment with
+  // the same outcome doesn't re-ping the mods.
+  alertedRecommendation String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([guildId, username])
+  @@index([guildId, status, lastFlaggedAt])
+  @@index([assessDueAt])
 }
 
 // Personal bearer tokens for the HTTP API (see API.md). A token acts AS its
