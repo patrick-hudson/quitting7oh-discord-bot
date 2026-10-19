@@ -29,11 +29,11 @@ export const env = {
   },
   // Final synthesis model — quality where the verdict is written.
   aiReviewModel(): string {
-    return process.env.AI_REVIEW_MODEL ?? "claude-sonnet-5";
+    return process.env.AI_REVIEW_MODEL ?? "claude-sonnet-5-5";
   },
   // Cheap high-volume model for the per-chunk map step of long histories.
   aiReviewMapModel(): string {
-    return process.env.AI_REVIEW_MAP_MODEL ?? "claude-haiku-4-5-20251001";
+    return process.env.AI_REVIEW_MAP_MODEL ?? "claude-haiku-5-5";
   },
   // Rough input-token ceiling that decides single-pass vs map-reduce, and
   // bounds the map chunk size. ~4 chars/token is the estimate used.
