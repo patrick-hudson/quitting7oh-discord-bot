@@ -29,6 +29,7 @@ import { runStatsWorker } from "./stats-worker";
 import { runReactionBackfill } from "./reaction-backfill";
 import { runJoinBackfill } from "./join-backfill";
 import { runRedditBackfill } from "./reddit-backfill";
+import { runRedditScreenWorker } from "./reddit-screen-worker";
 import { registerMilestoneHandler } from "./milestones";
 import { registerLeaveAnnouncer } from "./leave-announcer";
 import { registerWelcomeDm } from "./welcome-dm";
@@ -183,6 +184,7 @@ async function main() {
     runReactionBackfill();
     runJoinBackfill();
     runRedditBackfill();
+    runRedditScreenWorker(client);
   });
 
   client.on(Events.GuildCreate, async (g) => {

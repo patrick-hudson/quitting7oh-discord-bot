@@ -49,14 +49,31 @@ export function runRedditBackfill() {
 async function tick() {
   if (Date.now() < cooldownUntil) return; // respecting a slow-down signal
 
-  // Ensure a state row exists for every monitored sub.
+  // Ensure a state row exists for every monitored sub. Screened subs are
+  // collected too: their history gives the sourcing screen's user
+  // assessments context (the screen itself only labels recent items).
   const guilds = await prisma.guild.findMany({
-    where: { redditLeaderboardSubreddits: { isEmpty: false } },
-    select: { id: true, redditLeaderboardSubreddits: true },
+    where: {
+      OR: [
+        { redditLeaderboardSubreddits: { isEmpty: false } },
+        { redditScreenEnabled: true, redditScreenSubreddits: { isEmpty: false } },
+      ],
+    },
+    select: {
+      id: true,
+      redditLeaderboardSubreddits: true,
+      redditScreenEnabled: true,
+      redditScreenSubreddits: true,
+    },
   });
   for (const g of guilds) {
-    for (const sub of g.redditLeaderboardSubreddits) {
-      const subreddit = sub.toLowerCase();
+    const subs = new Set(
+      [
+        ...g.redditLeaderboardSubreddits,
+        ...(g.redditScreenEnabled ? g.redditScreenSubreddits : []),
+      ].map((s) => s.toLowerCase())
+    );
+    for (const subreddit of subs) {
       await prisma.redditBackfillState.upsert({
         where: { guildId_subreddit: { guildId: g.id, subreddit } },
         create: { guildId: g.id, subreddit },
