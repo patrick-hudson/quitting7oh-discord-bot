@@ -11,6 +11,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientId: process.env.DISCORD_CLIENT_ID!,
       clientSecret: process.env.DISCORD_CLIENT_SECRET!,
       authorization: { params: { scope: "identify email" } },
+      // Discord now returns an RFC 9207 `iss` param on the OAuth callback.
+      // Auth.js's Discord provider has no issuer, so it compares against its
+      // placeholder "https://authjs.dev" and rejects every sign-in with
+      // `unexpected "iss" (issuer) response parameter value`.
+      issuer: "https://discord.com",
     }),
   ],
   session: { strategy: "database" },
